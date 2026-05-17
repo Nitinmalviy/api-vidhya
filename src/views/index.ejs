@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Vidhya.care API</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: { brand: '#2563eb' },
+            animation: { ping2: 'ping 1.6s cubic-bezier(0,0,0.2,1) infinite' },
+          },
+        },
+      };
+    </script>
+  </head>
+  <body class="min-h-screen bg-slate-50 flex items-center justify-center px-4 font-sans">
+
+    <div class="w-full max-w-lg">
+
+      <!-- Card -->
+      <div class="bg-white rounded-3xl border border-slate-200 shadow-2xl shadow-slate-100 p-10 flex flex-col items-center text-center gap-6">
+
+        <!-- Brand -->
+        <div class="flex items-center gap-2.5">
+          <div class="w-10 h-10 rounded-2xl bg-[#2563eb] text-white font-black flex items-center justify-center text-xl shadow-lg shadow-blue-200">
+            V
+          </div>
+          <span class="text-2xl font-black tracking-tighter text-slate-900">
+            Vidhya<span class="text-[#2563eb]">.care</span>
+          </span>
+        </div>
+
+        <!-- Status badge -->
+        <div class="flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-50 border border-emerald-200">
+          <span class="relative flex h-2.5 w-2.5">
+            <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+            <span class="relative inline-flex h-2.5 w-2.5 rounded-full bg-emerald-500"></span>
+          </span>
+          <span class="text-xs font-bold text-emerald-700 uppercase tracking-widest">API is Live</span>
+        </div>
+
+        <!-- Heading -->
+        <div>
+          <h1 class="text-3xl font-black text-slate-900 leading-tight">
+            Server is running
+          </h1>
+          <p class="text-slate-500 text-sm mt-2 leading-relaxed">
+            The Vidhya.care backend API is online and accepting requests.
+          </p>
+        </div>
+
+        <!-- Meta grid -->
+        <div class="w-full grid grid-cols-2 gap-3 text-left">
+          <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
+            <p class="text-[11px] font-black uppercase tracking-widest text-slate-400">Environment</p>
+            <p class="text-sm font-bold text-slate-800 mt-1"><%= env %></p>
+          </div>
+          <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
+            <p class="text-[11px] font-black uppercase tracking-widest text-slate-400">Version</p>
+            <p class="text-sm font-bold text-slate-800 mt-1"><%= version %></p>
+          </div>
+          <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
+            <p class="text-[11px] font-black uppercase tracking-widest text-slate-400">Uptime</p>
+            <p class="text-sm font-bold text-slate-800 mt-1"><%= uptime %></p>
+          </div>
+          <div class="bg-slate-50 rounded-2xl border border-slate-200 p-4">
+            <p class="text-[11px] font-black uppercase tracking-widest text-slate-400">Timestamp</p>
+            <p class="text-sm font-bold text-slate-800 mt-1"><%= timestamp %></p>
+          </div>
+        </div>
+
+        <!-- Health endpoint hint -->
+        <div class="w-full flex items-center gap-3 bg-slate-900 rounded-2xl px-5 py-3.5">
+          <span class="text-slate-500 text-xs font-bold uppercase tracking-widest shrink-0">GET</span>
+          <code class="text-[#2563eb] text-sm font-mono font-bold">/api/v1/health</code>
+          <span class="ml-auto text-[10px] text-slate-500 font-semibold">JSON health check</span>
+        </div>
+
+      </div>
+
+      <!-- Footer -->
+      <p class="text-center text-xs text-slate-400 font-semibold mt-6">
+        © <%= new Date().getFullYear() %> Vidhya.care — All rights reserved
+      </p>
+
+    </div>
+  </body>
+</html>

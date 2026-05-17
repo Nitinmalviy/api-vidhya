@@ -1,4 +1,5 @@
 import 'express-async-errors';
+import path from 'path';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -9,7 +10,10 @@ import { requestLogger } from './middleware/requestLogger';
 
 const app = express();
 
-app.use(helmet());
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+
+app.use(helmet({ contentSecurityPolicy: false }));
 const vercelAllowedOrigins = new Set([
   'https://vidhya-care.vercel.app',
   'https://docter-vidhya.vercel.app',
