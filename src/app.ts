@@ -12,8 +12,9 @@ const app = express();
 app.use(helmet());
 const vercelAllowedOrigins = new Set([
   'https://vidhya-care.vercel.app',
-  'https://doctor-vidhya.vercel.app',
+  'https://docter-vidhya.vercel.app',
   'https://admin-vidhya.vercel.app',
+  'https://patient-vidhya.vercel.app',
   'https://chat-vidhya.vercel.app',
   'http://localhost:3000',
   'http://localhost:3001',
