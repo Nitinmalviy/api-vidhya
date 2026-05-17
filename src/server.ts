@@ -1,10 +1,12 @@
 import app from './app';
 import { env } from './config/env';
 import { connectDB } from './config/database';
+import { configureCloudinary } from './config/cloudinary';
 import { logger } from './utils/logger';
 
 const server = app.listen(env.PORT, async () => {
   logger.info({ port: env.PORT, env: env.NODE_ENV }, 'Server started');
+  configureCloudinary();
   await connectDB();
 });
 

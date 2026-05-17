@@ -2,7 +2,6 @@ import 'express-async-errors';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import { env } from './config/env';
 import router from './routes';
 import { notFound } from './middleware/notFound';
 import { errorHandler } from './middleware/errorHandler';
@@ -11,9 +10,27 @@ import { requestLogger } from './middleware/requestLogger';
 const app = express();
 
 app.use(helmet());
+const vercelAllowedOrigins = new Set([
+  'https://vidhya-care.vercel.app',
+  'https://doctor-vidhya.vercel.app',
+  'https://admin-vidhya.vercel.app',
+  'https://chat-vidhya.vercel.app',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'http://localhost:3002',
+  'http://localhost:3003',
+  'http://localhost:3004',
+]);
+
+const allowedOrigins = new Set<string>([...vercelAllowedOrigins]);
+
 app.use(
   cors({
-    origin: env.ALLOWED_ORIGINS.split(','),
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.has(origin)) return callback(null, true);
+      return callback(new Error(`CORS blocked for origin: ${origin}`));
+    },
     credentials: true,
   })
 );
@@ -21,7 +38,7 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(requestLogger);
 
-app.use('/api', router);
+app.use('/', router);
 
 app.use(notFound);
 app.use(errorHandler);
