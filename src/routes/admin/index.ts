@@ -3,6 +3,7 @@ import authRouter from './auth';
 import dashboardRouter from './dashboard';
 import profileRouter from './profile';
 import verifyDoctorRouter from './verify-doctor';
+import doctorsRouter from './doctors';
 
 const router = Router();
 
@@ -14,6 +15,7 @@ router.use('/auth', authRouter);
 router.use('/dashboard', dashboardRouter);
 router.use('/profile', profileRouter);
 router.use('/verify-doctor', verifyDoctorRouter);
+router.use('/doctors', doctorsRouter);
 
 export default router;
 

@@ -10,6 +10,7 @@ import { BadRequestError, ConflictError, ForbiddenError, UnauthorizedError } fro
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   const {
+    name,
     email,
     password,
     phone,
@@ -27,8 +28,8 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     clinicPhotoFile,
   } = req.body ?? {};
 
-  if (!email || !password || !phone || !workType) {
-    throw new BadRequestError('email, password, phone, and workType are required');
+  if (!name || !email || !password || !phone || !workType) {
+    throw new BadRequestError('name, email, password, phone, and workType are required');
   }
 
   const existing = await Doctor.findOne({ email }).lean().exec();
@@ -44,6 +45,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   ]);
 
   const doctor = await Doctor.create({
+    name: String(name).trim(),
     email,
     password,
     phone,

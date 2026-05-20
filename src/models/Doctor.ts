@@ -19,6 +19,7 @@ export interface ILicenseDetails {
 
 export interface IDoctor {
   // Auth fields
+  name: string;
   email: string;
   password?: string;
   phone: string;
@@ -67,6 +68,11 @@ const licenseDetailsSchema = new Schema<ILicenseDetails>(
 
 const doctorSchema = new Schema<IDoctor>(
   {
+    name: {
+      type: String,
+      required: true,
+      trim: true,
+    },
     email: {
       type: String,
       required: true,
