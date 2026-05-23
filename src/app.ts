@@ -15,11 +15,17 @@ app.set('views', path.join(__dirname, 'views'));
 
 app.use(helmet({ contentSecurityPolicy: false }));
 const vercelAllowedOrigins = new Set([
+  // Production custom domain
+  'https://vidhyacare.in',
+  'https://www.vidhyacare.in',
+  // Vercel preview URLs
   'https://vidhya-care.vercel.app',
+  'https://vidhya-landing-page.vercel.app',
   'https://docter-vidhya.vercel.app',
   'https://admin-vidhya.vercel.app',
   'https://patient-vidhya.vercel.app',
   'https://chat-vidhya.vercel.app',
+  // Local dev
   'http://localhost:3000',
   'http://localhost:3001',
   'http://localhost:3002',
