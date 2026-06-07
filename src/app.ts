@@ -35,16 +35,33 @@ const vercelAllowedOrigins = new Set([
 
 const allowedOrigins = new Set<string>([...vercelAllowedOrigins]);
 
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.has(origin)) return callback(null, true);
-      return callback(new Error(`CORS blocked for origin: ${origin}`));
-    },
-    credentials: true,
-  })
-);
+// Allow the curated list, any *.vercel.app preview, and the production domain.
+function isAllowedOrigin(origin: string): boolean {
+  if (allowedOrigins.has(origin)) return true;
+  try {
+    const { hostname } = new URL(origin);
+    if (hostname.endsWith('.vercel.app')) return true;
+    if (hostname === 'vidhyacare.in' || hostname.endsWith('.vidhyacare.in')) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+const corsMiddleware = cors({
+  origin(origin, callback) {
+    // No origin (mobile apps, curl, server-to-server) → allow
+    if (!origin) return callback(null, true);
+    // Reflect the origin if allowed; otherwise DON'T throw (throwing → 500 with no
+    // CORS headers, which the browser reports as a confusing "CORS error").
+    return callback(null, isAllowedOrigin(origin));
+  },
+  credentials: true,
+});
+
+app.use(corsMiddleware);
+// Make sure preflight requests are answered with CORS headers
+app.options('*', corsMiddleware);
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(requestLogger);

@@ -12,11 +12,16 @@ export async function uploadBase64ToCloudinary(
     return undefined;
   }
 
-  const result = await cloudinary.uploader.upload(file, {
-    folder,
-    resource_type: 'auto',
-  });
-
-  return result.secure_url;
+  try {
+    const result = await cloudinary.uploader.upload(file, {
+      folder,
+      resource_type: 'auto',
+    });
+    return result.secure_url;
+  } catch (err) {
+    // Never let a single bad/oversized file crash the whole request (500).
+    logger.error({ err, folder }, 'Cloudinary upload failed — continuing without this file');
+    return undefined;
+  }
 }
 
