@@ -3,11 +3,14 @@ import crypto from 'crypto';
 import { Doctor } from '../../models/Doctor';
 import { Clinic } from '../../models/Clinic';
 import { uploadBase64ToCloudinary } from '../../services/cloudinaryUpload';
-import { sendEmail } from '../../services/email';
+import { sendEmail, otpEmailTemplate } from '../../services/email';
 import { signAccessToken, signRefreshToken } from '../../utils/jwt';
 import { generateRandomToken } from '../../utils/tokens';
+import { generateOtp, hashOtp, otpExpiresAt } from '../../utils/otp';
 import { BadRequestError, ConflictError, ForbiddenError, UnauthorizedError } from '../../utils/AppError';
 import { createNotification } from '../../services/notification';
+import { env } from '../../config/env';
+import { logger } from '../../utils/logger';
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   const {
@@ -29,15 +32,25 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     clinicPhotoFile,
   } = req.body ?? {};
 
+  // ── Validate everything BEFORE creating records / uploading files ──
   if (!name || !email || !password || !phone || !workType) {
     throw new BadRequestError('name, email, password, phone, and workType are required');
   }
+  if (workType !== 'OWN_CLINIC' && workType !== 'EMPLOYEE') {
+    throw new BadRequestError("workType must be 'OWN_CLINIC' or 'EMPLOYEE'");
+  }
+  if (String(password).length < 8) {
+    throw new BadRequestError('Password must be at least 8 characters');
+  }
 
-  const existing = await Doctor.findOne({ email }).lean().exec();
-  if (existing) throw new ConflictError('Doctor already exists');
+  const normalizedEmail = String(email).toLowerCase().trim();
+  const existing = await Doctor.findOne({ email: normalizedEmail }).lean().exec();
+  if (existing) throw new ConflictError('An account with this email already exists');
 
-  const { token, tokenHash } = generateRandomToken();
-  const emailVerificationExpires = new Date(Date.now() + 1000 * 60 * 30);
+  // 6-digit OTP for email verification
+  const otp = generateOtp();
+  const otpHash = hashOtp(otp);
+  const emailVerificationExpires = otpExpiresAt();
 
   const [degreeUrl, licenseUrl, clinicPhotoUrl] = await Promise.all([
     degreeFile ? uploadBase64ToCloudinary(degreeFile, 'doctor-kyc') : Promise.resolve(undefined),
@@ -47,26 +60,36 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
   const doctor = await Doctor.create({
     name: String(name).trim(),
-    email,
+    email: normalizedEmail,
     password,
-    phone,
+    phone: String(phone).trim(),
     workType,
     clinicId: clinicId || undefined,
     specializations: Array.isArray(specializations) ? specializations : [],
     kycStatus: 'PENDING',
     isEmailVerified: false,
-    emailVerificationTokenHash: tokenHash,
+    emailVerificationTokenHash: otpHash,
     emailVerificationExpires,
     degreeDetails:
-      degreeName && university && passingYear && degreeUrl
-        ? { degreeName, university, passingYear: Number(passingYear), documentUrl: degreeUrl }
+      degreeName && degreeUrl
+        ? {
+            degreeName,
+            university: university || 'N/A',
+            passingYear: passingYear ? Number(passingYear) : new Date().getFullYear(),
+            documentUrl: degreeUrl,
+          }
         : undefined,
     licenseDetails:
-      licenseNumber && expiryDate && licenseUrl
-        ? { licenseNumber, expiryDate: new Date(expiryDate), documentUrl: licenseUrl }
+      licenseNumber && licenseUrl
+        ? {
+            licenseNumber,
+            expiryDate: expiryDate ? new Date(expiryDate) : new Date(Date.now() + 1000 * 60 * 60 * 24 * 365 * 5),
+            documentUrl: licenseUrl,
+          }
         : undefined,
   });
 
+  // Own-clinic doctors get a clinic record; employees can add a clinic later.
   if (workType === 'OWN_CLINIC') {
     const clinic = await Clinic.create({
       name: clinicName,
@@ -74,20 +97,27 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       doctorId: doctor._id,
       isVerified: false,
     });
-
     doctor.clinicId = clinic._id;
     await doctor.save();
-  } else if (workType === 'EMPLOYEE' && !clinicId) {
-    throw new BadRequestError('clinicId is required when workType is EMPLOYEE');
-  } else if (workType !== 'OWN_CLINIC' && workType !== 'EMPLOYEE') {
-    throw new BadRequestError("workType must be 'OWN_CLINIC' or 'EMPLOYEE'");
   }
 
-  await sendEmail({
-    to: doctor.email,
-    subject: 'Verify your doctor email',
-    text: `Your verification code: ${token}`,
+  // Send 6-digit verification OTP (don't fail registration if email hiccups)
+  const tpl = otpEmailTemplate({
+    heading: 'Verify your email',
+    intro: `Hi ${String(name).trim()}, use the code below to verify your Vidhya.care doctor account.`,
+    otp,
+    expiresInMinutes: env.OTP_EXPIRES_IN_MINUTES,
   });
+  try {
+    await sendEmail({
+      to: doctor.email,
+      subject: 'Your Vidhya.care verification code',
+      text: tpl.text,
+      html: tpl.html,
+    });
+  } catch (err) {
+    logger.error({ err, email: doctor.email }, 'Doctor registration: failed to send verification email');
+  }
 
   // Acknowledge KYC submission (in-app — shown after they verify & log in)
   await createNotification({
@@ -100,7 +130,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
   res.status(201).json({
     success: true,
-    message: 'Doctor registered. Verify email and wait for KYC approval.',
+    message: 'Doctor registered. Please verify your email.',
     data: {
       id: doctor._id,
       email: doctor.email,
@@ -160,6 +190,40 @@ export const verifyEmail = async (req: Request, res: Response): Promise<void> =>
   await doctor.save();
 
   res.status(200).json({ success: true, message: 'Email verified' });
+};
+
+export const resendVerification = async (req: Request, res: Response): Promise<void> => {
+  const { email } = req.body ?? {};
+  if (!email) throw new BadRequestError('email is required');
+
+  const doctor = await Doctor.findOne({ email: String(email).toLowerCase() })
+    .select('+emailVerificationTokenHash +emailVerificationExpires')
+    .exec();
+
+  // Don't leak which emails exist / are already verified
+  if (!doctor || doctor.isEmailVerified) {
+    res.status(200).json({ success: true, message: 'If the account exists, a new code was sent' });
+    return;
+  }
+
+  const otp = generateOtp();
+  doctor.emailVerificationTokenHash = hashOtp(otp);
+  doctor.emailVerificationExpires = otpExpiresAt();
+  await doctor.save();
+
+  const tpl = otpEmailTemplate({
+    heading: 'Your new verification code',
+    intro: `Hi ${doctor.name}, here is a fresh code to verify your Vidhya.care doctor account.`,
+    otp,
+    expiresInMinutes: env.OTP_EXPIRES_IN_MINUTES,
+  });
+  try {
+    await sendEmail({ to: doctor.email, subject: 'Your Vidhya.care verification code', text: tpl.text, html: tpl.html });
+  } catch (err) {
+    logger.error({ err, email: doctor.email }, 'Doctor resend verification: email failed');
+  }
+
+  res.status(200).json({ success: true, message: 'If the account exists, a new code was sent' });
 };
 
 export const forgotPassword = async (req: Request, res: Response): Promise<void> => {
