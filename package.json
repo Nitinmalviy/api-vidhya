@@ -7,7 +7,10 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "lint": "eslint src --ext .ts",
-    "format": "prettier --write src"
+    "format": "prettier --write src",
+    "seed:admin": "tsx src/scripts/seed-admin.ts",
+    "seed:doctors": "tsx src/scripts/seed-doctors.ts",
+    "seed:patients": "tsx src/scripts/seed-patients.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.0",

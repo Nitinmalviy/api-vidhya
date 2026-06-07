@@ -1,14 +1,15 @@
 import { cloudinary, isCloudinaryConfigured } from '../config/cloudinary';
-import { AppError } from '../utils/AppError';
+import { logger } from '../utils/logger';
 
 export type CloudinaryFolder = 'doctor-kyc' | 'clinic';
 
 export async function uploadBase64ToCloudinary(
   file: string,
   folder: CloudinaryFolder
-): Promise<string> {
+): Promise<string | undefined> {
   if (!isCloudinaryConfigured()) {
-    throw new AppError('Cloudinary is not configured', 500);
+    logger.warn('Cloudinary is not configured — skipping file upload');
+    return undefined;
   }
 
   const result = await cloudinary.uploader.upload(file, {

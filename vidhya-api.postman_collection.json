@@ -1,0 +1,561 @@
+{
+  "info": {
+    "name": "Vidhya.care API",
+    "description": "Complete API collection for Vidhya.care — Admin, Doctor, Patient. \n\nBase URL variable: {{base_url}} (default: http://localhost:5000)\n\nAuth tokens are auto-saved on login via Tests scripts:\n- Admin login  → saves {{admin_token}}\n- Doctor login → saves {{doctor_token}}\n- Patient login → saves {{patient_token}}",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "base_url",      "value": "http://localhost:5000", "type": "string" },
+    { "key": "admin_token",   "value": "", "type": "string" },
+    { "key": "doctor_token",  "value": "", "type": "string" },
+    { "key": "patient_token", "value": "", "type": "string" },
+    { "key": "doctor_id",     "value": "", "type": "string" }
+  ],
+  "item": [
+
+    {
+      "name": "🔑 Admin",
+      "item": [
+
+        {
+          "name": "Auth",
+          "item": [
+            {
+              "name": "Register Admin",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/admin/auth/register", "host": ["{{base_url}}"], "path": ["api","v1","admin","auth","register"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Vidhya Admin\",\n  \"email\": \"admin@vidhyacare.in\",\n  \"password\": \"Admin@123\",\n  \"role\": \"SUPER_ADMIN\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Login Admin",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "var json = pm.response.json();",
+                    "if (json.data && json.data.tokens) {",
+                    "  pm.collectionVariables.set('admin_token', json.data.tokens.accessToken);",
+                    "}"
+                  ],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/admin/auth/login", "host": ["{{base_url}}"], "path": ["api","v1","admin","auth","login"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"adminvidhya@yopmail.com\",\n  \"password\": \"admiVidhya@123\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Verify Email",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/admin/auth/verify-email", "host": ["{{base_url}}"], "path": ["api","v1","admin","auth","verify-email"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"admin@vidhyacare.in\",\n  \"code\": \"<6-digit-code>\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Resend Verification",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/admin/auth/resend-verification", "host": ["{{base_url}}"], "path": ["api","v1","admin","auth","resend-verification"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"admin@vidhyacare.in\"\n}"
+                }
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Profile",
+          "item": [
+            {
+              "name": "Get Admin Profile",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+                "url": { "raw": "{{base_url}}/api/v1/admin/profile", "host": ["{{base_url}}"], "path": ["api","v1","admin","profile"] }
+              }
+            },
+            {
+              "name": "Update Admin Profile",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "url": { "raw": "{{base_url}}/api/v1/admin/profile", "host": ["{{base_url}}"], "path": ["api","v1","admin","profile"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Vidhya Super Admin\"\n}"
+                }
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Dashboard",
+          "item": [
+            {
+              "name": "Get Dashboard Stats",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+                "url": { "raw": "{{base_url}}/api/v1/admin/dashboard", "host": ["{{base_url}}"], "path": ["api","v1","admin","dashboard"] }
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Doctors",
+          "item": [
+            {
+              "name": "Get All Doctors",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/doctors?status=PENDING&page=1&limit=20",
+                  "host": ["{{base_url}}"],
+                  "path": ["api","v1","admin","doctors"],
+                  "query": [
+                    { "key": "status", "value": "PENDING", "description": "PENDING | APPROVED | REJECTED (optional)" },
+                    { "key": "page",   "value": "1" },
+                    { "key": "limit",  "value": "20" }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Get Top Doctors (Approved)",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+                "url": { "raw": "{{base_url}}/api/v1/admin/top-doctors", "host": ["{{base_url}}"], "path": ["api","v1","admin","top-doctors"] }
+              }
+            },
+            {
+              "name": "Verify Doctor (Approve / Reject)",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/verify-doctor/{{doctor_id}}",
+                  "host": ["{{base_url}}"],
+                  "path": ["api","v1","admin","verify-doctor","{{doctor_id}}"]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"APPROVED\",\n  \"adminRemarks\": \"Documents verified successfully.\"\n}"
+                }
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Patients",
+          "item": [
+            {
+              "name": "Get All Patients",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/patients?page=1&limit=10",
+                  "host": ["{{base_url}}"],
+                  "path": ["api","v1","admin","patients"],
+                  "query": [
+                    { "key": "search", "value": "",       "description": "Search by name / email / phone", "disabled": true },
+                    { "key": "plan",   "value": "FREE",   "description": "FREE | PREMIUM (optional)", "disabled": true },
+                    { "key": "page",   "value": "1" },
+                    { "key": "limit",  "value": "10" }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Stats",
+          "item": [
+            {
+              "name": "Growth Stats (Monthly / Yearly)",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+                "url": {
+                  "raw": "{{base_url}}/api/v1/admin/stats/growth?timeFrame=monthly",
+                  "host": ["{{base_url}}"],
+                  "path": ["api","v1","admin","stats","growth"],
+                  "query": [
+                    { "key": "timeFrame", "value": "monthly", "description": "monthly | yearly" }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "KYC Stats",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{admin_token}}" }],
+                "url": { "raw": "{{base_url}}/api/v1/admin/stats/kyc", "host": ["{{base_url}}"], "path": ["api","v1","admin","stats","kyc"] }
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Health",
+          "item": [
+            {
+              "name": "Admin Health Check",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{base_url}}/api/v1/admin/health", "host": ["{{base_url}}"], "path": ["api","v1","admin","health"] }
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "🩺 Doctor",
+      "item": [
+
+        {
+          "name": "Auth",
+          "item": [
+            {
+              "name": "Register Doctor",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/doctor/auth/register", "host": ["{{base_url}}"], "path": ["api","v1","doctor","auth","register"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Dr. Test Doctor\",\n  \"email\": \"testdoctor@yopmail.com\",\n  \"password\": \"Doctor@123\",\n  \"phone\": \"+919876500000\",\n  \"workType\": \"OWN_CLINIC\",\n  \"clinicName\": \"Test Clinic\",\n  \"specializations\": [\"General Medicine\"],\n  \"degreeName\": \"MBBS\",\n  \"university\": \"AIIMS Delhi\",\n  \"passingYear\": 2015,\n  \"licenseNumber\": \"MCI-TEST-001\",\n  \"expiryDate\": \"2030-12-31\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Login Doctor",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "var json = pm.response.json();",
+                    "if (json.data && json.data.tokens) {",
+                    "  pm.collectionVariables.set('doctor_token', json.data.tokens.accessToken);",
+                    "}"
+                  ],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/doctor/auth/login", "host": ["{{base_url}}"], "path": ["api","v1","doctor","auth","login"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"arjun.sharma@vidhya.care\",\n  \"password\": \"Doctor@123\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Verify Email",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/doctor/auth/verify-email", "host": ["{{base_url}}"], "path": ["api","v1","doctor","auth","verify-email"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"testdoctor@yopmail.com\",\n  \"code\": \"<hex-token-from-email>\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Forgot Password",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/doctor/auth/forgot-password", "host": ["{{base_url}}"], "path": ["api","v1","doctor","auth","forgot-password"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"testdoctor@yopmail.com\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Reset Password",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/doctor/auth/reset-password", "host": ["{{base_url}}"], "path": ["api","v1","doctor","auth","reset-password"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"testdoctor@yopmail.com\",\n  \"code\": \"<token-from-email>\",\n  \"newPassword\": \"NewDoctor@456\"\n}"
+                }
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Profile",
+          "item": [
+            {
+              "name": "Get Doctor Profile",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{doctor_token}}" }],
+                "url": { "raw": "{{base_url}}/api/v1/doctor/profile", "host": ["{{base_url}}"], "path": ["api","v1","doctor","profile"] }
+              }
+            },
+            {
+              "name": "Update Doctor Profile",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{doctor_token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "url": { "raw": "{{base_url}}/api/v1/doctor/profile", "host": ["{{base_url}}"], "path": ["api","v1","doctor","profile"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Dr. Updated Name\",\n  \"phone\": \"+919876500001\"\n}"
+                }
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Dashboard",
+          "item": [
+            {
+              "name": "Get Doctor Dashboard",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{doctor_token}}" }],
+                "url": { "raw": "{{base_url}}/api/v1/doctor/dashboard", "host": ["{{base_url}}"], "path": ["api","v1","doctor","dashboard"] }
+              }
+            },
+            {
+              "name": "Get Consultations Dashboard",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{doctor_token}}" }],
+                "url": { "raw": "{{base_url}}/api/v1/doctor/dashboard/consultations", "host": ["{{base_url}}"], "path": ["api","v1","doctor","dashboard","consultations"] }
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Health",
+          "item": [
+            {
+              "name": "Doctor Health Check",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{base_url}}/api/v1/doctor/health", "host": ["{{base_url}}"], "path": ["api","v1","doctor","health"] }
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "🏥 Patient",
+      "item": [
+
+        {
+          "name": "Auth",
+          "item": [
+            {
+              "name": "Register Patient",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/patient/auth/register", "host": ["{{base_url}}"], "path": ["api","v1","patient","auth","register"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Test Patient\",\n  \"email\": \"testpatient@yopmail.com\",\n  \"phone\": \"+919876000001\",\n  \"password\": \"Patient@123\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Verify Email (OTP)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/patient/auth/verify-email", "host": ["{{base_url}}"], "path": ["api","v1","patient","auth","verify-email"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"testpatient@yopmail.com\",\n  \"otp\": \"123456\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Login Patient",
+              "event": [{
+                "listen": "test",
+                "script": {
+                  "exec": [
+                    "var json = pm.response.json();",
+                    "if (json.data && json.data.tokens) {",
+                    "  pm.collectionVariables.set('patient_token', json.data.tokens.accessToken);",
+                    "}"
+                  ],
+                  "type": "text/javascript"
+                }
+              }],
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/patient/auth/login", "host": ["{{base_url}}"], "path": ["api","v1","patient","auth","login"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"aarav.sharma@yopmail.com\",\n  \"password\": \"Patient@123\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Forgot Password",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/patient/auth/forgot-password", "host": ["{{base_url}}"], "path": ["api","v1","patient","auth","forgot-password"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"aarav.sharma@yopmail.com\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Verify Reset OTP",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/patient/auth/verify-reset-otp", "host": ["{{base_url}}"], "path": ["api","v1","patient","auth","verify-reset-otp"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"aarav.sharma@yopmail.com\",\n  \"otp\": \"123456\"\n}"
+                }
+              }
+            },
+            {
+              "name": "Reset Password",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "url": { "raw": "{{base_url}}/api/v1/patient/auth/reset-password", "host": ["{{base_url}}"], "path": ["api","v1","patient","auth","reset-password"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"resetToken\": \"<token-from-verify-reset-otp>\",\n  \"newPassword\": \"NewPatient@456\"\n}"
+                }
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Profile",
+          "item": [
+            {
+              "name": "Get Patient Profile",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{patient_token}}" }],
+                "url": { "raw": "{{base_url}}/api/v1/patient/profile", "host": ["{{base_url}}"], "path": ["api","v1","patient","profile"] }
+              }
+            },
+            {
+              "name": "Update Patient Profile",
+              "request": {
+                "method": "PATCH",
+                "header": [
+                  { "key": "Authorization", "value": "Bearer {{patient_token}}" },
+                  { "key": "Content-Type", "value": "application/json" }
+                ],
+                "url": { "raw": "{{base_url}}/api/v1/patient/profile", "host": ["{{base_url}}"], "path": ["api","v1","patient","profile"] },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Updated Name\",\n  \"phone\": \"+919876000002\",\n  \"bloodGroup\": \"O+\"\n}"
+                }
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Dashboard",
+          "item": [
+            {
+              "name": "Get Patient Dashboard",
+              "request": {
+                "method": "GET",
+                "header": [{ "key": "Authorization", "value": "Bearer {{patient_token}}" }],
+                "url": { "raw": "{{base_url}}/api/v1/patient/dashboard", "host": ["{{base_url}}"], "path": ["api","v1","patient","dashboard"] }
+              }
+            }
+          ]
+        },
+
+        {
+          "name": "Health",
+          "item": [
+            {
+              "name": "Patient Health Check",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{base_url}}/api/v1/patient/health", "host": ["{{base_url}}"], "path": ["api","v1","patient","health"] }
+              }
+            }
+          ]
+        }
+      ]
+    },
+
+    {
+      "name": "⚙️ Global",
+      "item": [
+        {
+          "name": "API Root Health",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{base_url}}/api/v1/health", "host": ["{{base_url}}"], "path": ["api","v1","health"] }
+          }
+        }
+      ]
+    }
+
+  ]
+}

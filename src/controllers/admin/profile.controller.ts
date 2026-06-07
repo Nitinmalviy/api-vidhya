@@ -1,24 +1,22 @@
-import type { Request, Response } from 'express';
+import type { Response } from 'express';
+import { Admin } from '../../models/Admin';
+import { AuthRequest } from '../../types';
+import { NotFoundError } from '../../utils/AppError';
 
-export const getProfile = async (_req: Request, res: Response): Promise<void> => {
-  res.status(200).json({
-    success: true,
-    message: 'Admin profile (dummy)',
-    data: {
-      id: 'admin_dummy_id',
-      name: 'Admin User',
-      email: 'admin@example.com',
-    },
-  });
+export const getProfile = async (req: AuthRequest, res: Response): Promise<void> => {
+  const admin = await Admin.findById(req.user!.id).select('name email role createdAt').lean();
+  if (!admin) throw new NotFoundError('Admin not found');
+  res.status(200).json({ success: true, data: admin });
 };
 
-export const updateProfile = async (req: Request, res: Response): Promise<void> => {
-  res.status(200).json({
-    success: true,
-    message: 'Admin profile updated (dummy)',
-    data: {
-      ...req.body,
-    },
-  });
+export const updateProfile = async (req: AuthRequest, res: Response): Promise<void> => {
+  const admin = await Admin.findByIdAndUpdate(
+    req.user!.id,
+    { $set: { name: req.body.name } },
+    { new: true, runValidators: true }
+  )
+    .select('name email role createdAt')
+    .lean();
+  if (!admin) throw new NotFoundError('Admin not found');
+  res.status(200).json({ success: true, data: admin });
 };
-
