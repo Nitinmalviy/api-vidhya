@@ -7,6 +7,7 @@ import { sendEmail } from '../../services/email';
 import { signAccessToken, signRefreshToken } from '../../utils/jwt';
 import { generateRandomToken } from '../../utils/tokens';
 import { BadRequestError, ConflictError, ForbiddenError, UnauthorizedError } from '../../utils/AppError';
+import { createNotification } from '../../services/notification';
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   const {
@@ -86,6 +87,15 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     to: doctor.email,
     subject: 'Verify your doctor email',
     text: `Your verification code: ${token}`,
+  });
+
+  // Acknowledge KYC submission (in-app — shown after they verify & log in)
+  await createNotification({
+    userId: doctor._id,
+    role: 'doctor',
+    type: 'KYC_SUBMITTED',
+    title: 'KYC Details Received',
+    message: 'We have received your KYC details. Our admin team will review them and notify you once approved.',
   });
 
   res.status(201).json({
