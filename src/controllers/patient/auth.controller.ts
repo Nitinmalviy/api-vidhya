@@ -1,11 +1,12 @@
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { Patient } from '../../models/Patient';
-import { sendEmail } from '../../services/email';
+import { sendEmail, otpEmailTemplate } from '../../services/email';
 import { signAccessToken, signRefreshToken } from '../../utils/jwt';
 import { generateOtp, hashOtp, otpExpiresAt } from '../../utils/otp';
 import { BadRequestError, ConflictError, ForbiddenError, UnauthorizedError } from '../../utils/AppError';
 import { env } from '../../config/env';
+import { logger } from '../../utils/logger';
 
 /* ─────────────────────────────────────────────
    POST /api/patient/auth/register
@@ -20,33 +21,64 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     throw new BadRequestError('Password must be at least 8 characters');
   }
 
-  const existing = await Patient.findOne({ email: String(email).toLowerCase() }).lean().exec();
-  if (existing) throw new ConflictError('An account with this email already exists');
+  const normalizedEmail = String(email).toLowerCase().trim();
 
   const otp = generateOtp();
   const otpHash = hashOtp(otp);
   const expires = otpExpiresAt();
 
-  await Patient.create({
-    name: String(name).trim(),
-    email: String(email).toLowerCase().trim(),
-    phone: String(phone).trim(),
-    password,
-    isEmailVerified: false,
-    emailVerificationTokenHash: otpHash,
-    emailVerificationExpires: expires,
+  const existing = await Patient.findOne({ email: normalizedEmail })
+    .select('+password isEmailVerified')
+    .exec();
+
+  if (existing) {
+    // Block only if the account is already verified.
+    if (existing.isEmailVerified) {
+      throw new ConflictError('An account with this email already exists');
+    }
+
+    // Unverified account from a past, incomplete signup — refresh details + OTP and resend.
+    existing.name = String(name).trim();
+    existing.phone = String(phone).trim();
+    existing.password = String(password); // re-hashed by the pre-save hook
+    existing.emailVerificationTokenHash = otpHash;
+    existing.emailVerificationExpires = expires;
+    await existing.save();
+  } else {
+    await Patient.create({
+      name: String(name).trim(),
+      email: normalizedEmail,
+      phone: String(phone).trim(),
+      password,
+      isEmailVerified: false,
+      emailVerificationTokenHash: otpHash,
+      emailVerificationExpires: expires,
+    });
+  }
+
+  const tpl = otpEmailTemplate({
+    heading: 'Verify your email',
+    intro: `Hi ${String(name).trim()}, use the code below to verify your Vidhya.care account.`,
+    otp,
+    expiresInMinutes: env.OTP_EXPIRES_IN_MINUTES,
   });
 
-  await sendEmail({
-    to: String(email).toLowerCase().trim(),
-    subject: 'Your Vidhya.care verification code',
-    text: `Your email verification OTP is: ${otp}\n\nThis code expires in ${env.OTP_EXPIRES_IN_MINUTES} minutes.\n\nIf you did not create this account, please ignore this email.`,
-  });
+  // Don't fail registration if the email provider hiccups — the user can resend.
+  try {
+    await sendEmail({
+      to: normalizedEmail,
+      subject: 'Your Vidhya.care verification code',
+      text: tpl.text,
+      html: tpl.html,
+    });
+  } catch (err) {
+    logger.error({ err, email: normalizedEmail }, 'Patient registration: failed to send OTP email');
+  }
 
   res.status(201).json({
     success: true,
     message: 'Account created. Please check your email for the verification OTP.',
-    data: { email: String(email).toLowerCase().trim() },
+    data: { email: normalizedEmail },
   });
 };
 
@@ -139,11 +171,23 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
   patient.passwordResetExpires = otpExpiresAt();
   await patient.save();
 
-  await sendEmail({
-    to: patient.email,
-    subject: 'Your Vidhya.care password reset OTP',
-    text: `Your password reset OTP is: ${otp}\n\nThis code expires in ${env.OTP_EXPIRES_IN_MINUTES} minutes.\n\nIf you did not request this, please ignore this email.`,
+  const tpl = otpEmailTemplate({
+    heading: 'Reset your password',
+    intro: 'Use the code below to reset your Vidhya.care password.',
+    otp,
+    expiresInMinutes: env.OTP_EXPIRES_IN_MINUTES,
   });
+
+  try {
+    await sendEmail({
+      to: patient.email,
+      subject: 'Your Vidhya.care password reset OTP',
+      text: tpl.text,
+      html: tpl.html,
+    });
+  } catch (err) {
+    logger.error({ err, email: patient.email }, 'Patient forgot-password: failed to send OTP email');
+  }
 
   res.status(200).json({ success: true, message: 'If that email is registered, a reset OTP has been sent.' });
 };

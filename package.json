@@ -10,7 +10,8 @@
     "format": "prettier --write src",
     "seed:admin": "tsx src/scripts/seed-admin.ts",
     "seed:doctors": "tsx src/scripts/seed-doctors.ts",
-    "seed:patients": "tsx src/scripts/seed-patients.ts"
+    "seed:patients": "tsx src/scripts/seed-patients.ts",
+    "test:email": "tsx src/scripts/test-email.ts"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.0",
