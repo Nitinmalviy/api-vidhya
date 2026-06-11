@@ -19,6 +19,7 @@ export interface IPatient {
   allergies: string[];
   address?: string;
   emergencyContact?: { name: string; phone: string };
+  sessionVersion: number;
   isEmailVerified: boolean;
   emailVerificationTokenHash?: string;
   emailVerificationExpires?: Date;
@@ -48,6 +49,7 @@ const patientSchema = new Schema<IPatient>(
       type: { name: { type: String, trim: true }, phone: { type: String, trim: true } },
       _id: false,
     },
+    sessionVersion: { type: Number, default: 0 },
     isEmailVerified: { type: Boolean, default: false },
     emailVerificationTokenHash: { type: String, select: false },
     emailVerificationExpires: { type: Date, select: false },

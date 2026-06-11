@@ -4,7 +4,7 @@ import { Doctor } from '../../models/Doctor';
 import { Clinic } from '../../models/Clinic';
 import { uploadBase64ToCloudinary } from '../../services/cloudinaryUpload';
 import { sendEmail, otpEmailTemplate } from '../../services/email';
-import { signAccessToken, signRefreshToken } from '../../utils/jwt';
+import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt';
 import { generateRandomToken } from '../../utils/tokens';
 import { generateOtp, hashOtp, otpExpiresAt } from '../../utils/otp';
 import { BadRequestError, ConflictError, ForbiddenError, UnauthorizedError } from '../../utils/AppError';
@@ -156,8 +156,13 @@ export const login = async (req: Request, res: Response): Promise<void> => {
   if (!doctor.isEmailVerified) throw new ForbiddenError('Email not verified');
   if (doctor.kycStatus !== 'APPROVED') throw new ForbiddenError('Doctor not approved yet');
 
-  const accessToken = signAccessToken({ id: String(doctor._id), role: 'doctor' });
-  const refreshToken = signRefreshToken({ id: String(doctor._id), role: 'doctor' });
+  // New login = new session: invalidates tokens on any other device/browser.
+  doctor.sessionVersion = (doctor.sessionVersion ?? 0) + 1;
+  await doctor.save();
+
+  const tokenPayload = { id: String(doctor._id), role: 'doctor' as const, sv: doctor.sessionVersion };
+  const accessToken = signAccessToken(tokenPayload);
+  const refreshToken = signRefreshToken(tokenPayload);
 
   res.status(200).json({
     success: true,
@@ -167,6 +172,26 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       tokens: { accessToken, refreshToken },
     },
   });
+};
+
+/* POST /api/v1/doctor/auth/refresh  { refreshToken } */
+export const refresh = async (req: Request, res: Response): Promise<void> => {
+  const { refreshToken } = req.body ?? {};
+  if (!refreshToken) throw new BadRequestError('refreshToken is required');
+
+  const payload = verifyRefreshToken(String(refreshToken));
+  if (payload.role !== 'doctor') throw new UnauthorizedError('Invalid refresh token');
+
+  const doctor = await Doctor.findById(payload.id).select('sessionVersion').lean();
+  if (!doctor) throw new UnauthorizedError('Account no longer exists');
+  if (payload.sv !== undefined && (doctor.sessionVersion ?? 0) !== payload.sv) {
+    throw new UnauthorizedError('You signed in on another device, so this session has ended.');
+  }
+
+  const sv = payload.sv ?? doctor.sessionVersion ?? 0;
+  const accessToken = signAccessToken({ id: payload.id, role: 'doctor', sv });
+
+  res.status(200).json({ success: true, data: { accessToken } });
 };
 
 export const verifyEmail = async (req: Request, res: Response): Promise<void> => {

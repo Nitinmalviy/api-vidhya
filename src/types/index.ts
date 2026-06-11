@@ -6,6 +6,8 @@ export type UserRole = 'user' | 'doctor' | 'admin';
 export interface JwtPayload {
   id: string;
   role: UserRole;
+  /** Session version — bumped on every login so older sessions are invalidated. */
+  sv?: number;
   iat?: number;
   exp?: number;
 }

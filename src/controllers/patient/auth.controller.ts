@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
 import { Patient } from '../../models/Patient';
 import { sendEmail, otpEmailTemplate } from '../../services/email';
-import { signAccessToken, signRefreshToken } from '../../utils/jwt';
+import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt';
 import { generateOtp, hashOtp, otpExpiresAt } from '../../utils/otp';
 import { BadRequestError, ConflictError, ForbiddenError, UnauthorizedError } from '../../utils/AppError';
 import { env } from '../../config/env';
@@ -128,8 +128,14 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     throw new ForbiddenError('Please verify your email before signing in');
   }
 
-  const accessToken = signAccessToken({ id: String(patient._id), role: 'user' });
-  const refreshToken = signRefreshToken({ id: String(patient._id), role: 'user' });
+  // New login = new session: bump the version so tokens from any previous
+  // device/browser stop working (single active session per user).
+  patient.sessionVersion = (patient.sessionVersion ?? 0) + 1;
+  await patient.save();
+
+  const tokenPayload = { id: String(patient._id), role: 'user' as const, sv: patient.sessionVersion };
+  const accessToken = signAccessToken(tokenPayload);
+  const refreshToken = signRefreshToken(tokenPayload);
 
   res.status(200).json({
     success: true,
@@ -145,6 +151,31 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       tokens: { accessToken, refreshToken },
     },
   });
+};
+
+/* ─────────────────────────────────────────────
+   POST /api/patient/auth/refresh  { refreshToken }
+   Issues a fresh access token so users stay
+   signed in until the refresh token expires —
+   unless they logged in elsewhere meanwhile.
+───────────────────────────────────────────── */
+export const refresh = async (req: Request, res: Response): Promise<void> => {
+  const { refreshToken } = req.body ?? {};
+  if (!refreshToken) throw new BadRequestError('refreshToken is required');
+
+  const payload = verifyRefreshToken(String(refreshToken));
+  if (payload.role !== 'user') throw new UnauthorizedError('Invalid refresh token');
+
+  const patient = await Patient.findById(payload.id).select('sessionVersion').lean();
+  if (!patient) throw new UnauthorizedError('Account no longer exists');
+  if (payload.sv !== undefined && (patient.sessionVersion ?? 0) !== payload.sv) {
+    throw new UnauthorizedError('You signed in on another device, so this session has ended.');
+  }
+
+  const sv = payload.sv ?? patient.sessionVersion ?? 0;
+  const accessToken = signAccessToken({ id: payload.id, role: 'user', sv });
+
+  res.status(200).json({ success: true, data: { accessToken } });
 };
 
 /* ─────────────────────────────────────────────

@@ -23,6 +23,7 @@ export interface IDoctor {
   email: string;
   password?: string;
   phone: string;
+  sessionVersion: number;
   isEmailVerified: boolean;
   emailVerificationTokenHash?: string;
   emailVerificationExpires?: Date;
@@ -121,6 +122,10 @@ const doctorSchema = new Schema<IDoctor>(
       type: String,
       required: false,
       trim: true,
+    },
+    sessionVersion: {
+      type: Number,
+      default: 0,
     },
     isEmailVerified: {
       type: Boolean,
