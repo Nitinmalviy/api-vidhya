@@ -25,14 +25,14 @@ async function run() {
 
   const tpl = otpEmailTemplate({
     heading: 'Test OTP Email',
-    intro: 'This is a test email from Vidhya.care to confirm SMTP works.',
+    intro: 'This is a test email from VidhyaCare to confirm SMTP works.',
     otp: '123456',
     expiresInMinutes: 5,
   });
 
   await sendEmail({
     to: String(to),
-    subject: 'Vidhya.care — SMTP Test',
+    subject: 'VidhyaCare — SMTP Test',
     text: tpl.text,
     html: tpl.html,
   });

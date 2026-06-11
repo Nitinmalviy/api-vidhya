@@ -104,14 +104,14 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   // Send 6-digit verification OTP (don't fail registration if email hiccups)
   const tpl = otpEmailTemplate({
     heading: 'Verify your email',
-    intro: `Hi ${String(name).trim()}, use the code below to verify your Vidhya.care doctor account.`,
+    intro: `Hi ${String(name).trim()}, use the code below to verify your VidhyaCare doctor account.`,
     otp,
     expiresInMinutes: env.OTP_EXPIRES_IN_MINUTES,
   });
   try {
     await sendEmail({
       to: doctor.email,
-      subject: 'Your Vidhya.care verification code',
+      subject: 'Your VidhyaCare verification code',
       text: tpl.text,
       html: tpl.html,
     });
@@ -213,12 +213,12 @@ export const resendVerification = async (req: Request, res: Response): Promise<v
 
   const tpl = otpEmailTemplate({
     heading: 'Your new verification code',
-    intro: `Hi ${doctor.name}, here is a fresh code to verify your Vidhya.care doctor account.`,
+    intro: `Hi ${doctor.name}, here is a fresh code to verify your VidhyaCare doctor account.`,
     otp,
     expiresInMinutes: env.OTP_EXPIRES_IN_MINUTES,
   });
   try {
-    await sendEmail({ to: doctor.email, subject: 'Your Vidhya.care verification code', text: tpl.text, html: tpl.html });
+    await sendEmail({ to: doctor.email, subject: 'Your VidhyaCare verification code', text: tpl.text, html: tpl.html });
   } catch (err) {
     logger.error({ err, email: doctor.email }, 'Doctor resend verification: email failed');
   }

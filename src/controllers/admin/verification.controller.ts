@@ -40,13 +40,13 @@ export const verifyDoctor = async (req: Request, res: Response): Promise<void> =
 
     const tpl = infoEmailTemplate({
       heading: 'Your KYC is Approved 🎉',
-      body: `Hi ${doctor.name}, great news — your KYC verification has been approved. You can now start creating OPD sessions and accepting patient appointments on Vidhya.care.`,
+      body: `Hi ${doctor.name}, great news — your KYC verification has been approved. You can now start creating OPD sessions and accepting patient appointments on VidhyaCare.`,
       accent: 'green',
       note: 'Log in to your doctor dashboard to get started.',
     });
 
     try {
-      await sendEmail({ to: doctor.email, subject: 'Your Vidhya.care KYC is Approved', text: tpl.text, html: tpl.html });
+      await sendEmail({ to: doctor.email, subject: 'Your VidhyaCare KYC is Approved', text: tpl.text, html: tpl.html });
     } catch (err) {
       logger.error({ err, email: doctor.email }, 'Failed to send KYC approval email');
     }
@@ -67,7 +67,7 @@ export const verifyDoctor = async (req: Request, res: Response): Promise<void> =
     });
 
     try {
-      await sendEmail({ to: doctor.email, subject: 'Action Required — Your Vidhya.care KYC', text: tpl.text, html: tpl.html });
+      await sendEmail({ to: doctor.email, subject: 'Action Required — Your VidhyaCare KYC', text: tpl.text, html: tpl.html });
     } catch (err) {
       logger.error({ err, email: doctor.email }, 'Failed to send KYC rejection email');
     }

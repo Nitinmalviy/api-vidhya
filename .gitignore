@@ -12,3 +12,5 @@ coverage
 *.tsbuildinfo
 .eslintcache
 .prettierCache
+VidhyaCare API.postman_collection.json
+VidhyaCare API.postman_environment

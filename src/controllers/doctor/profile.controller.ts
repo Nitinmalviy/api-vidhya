@@ -182,7 +182,7 @@ export const updateKyc = async (req: AuthRequest, res: Response): Promise<void> 
   });
 
   try {
-    await sendEmail({ to: doctor.email, subject: 'We received your Vidhya.care KYC details', text: tpl.text, html: tpl.html });
+    await sendEmail({ to: doctor.email, subject: 'We received your VidhyaCare KYC details', text: tpl.text, html: tpl.html });
   } catch (err) {
     logger.error({ err, email: doctor.email }, 'Failed to send KYC submission email');
   }

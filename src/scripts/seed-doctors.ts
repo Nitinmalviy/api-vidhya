@@ -14,7 +14,7 @@ const PASSWORD = 'Doctor@123';
 const mockDoctors = [
   {
     name: 'Dr. Arjun Sharma',
-    email: 'arjun.sharma@vidhya.care',
+    email: 'arjun.sharma@vidhyacare.in',
     phone: '+91 98765 11001',
     specializations: ['Cardiology'],
     workType: 'OWN_CLINIC' as const,
@@ -34,7 +34,7 @@ const mockDoctors = [
   },
   {
     name: 'Dr. Priya Nair',
-    email: 'priya.nair@vidhya.care',
+    email: 'priya.nair@vidhyacare.in',
     phone: '+91 99887 22002',
     specializations: ['Dermatology'],
     workType: 'EMPLOYEE' as const,
@@ -54,7 +54,7 @@ const mockDoctors = [
   },
   {
     name: 'Dr. Suresh Verma',
-    email: 'suresh.verma@vidhya.care',
+    email: 'suresh.verma@vidhyacare.in',
     phone: '+91 91234 33003',
     specializations: ['General Medicine'],
     workType: 'OWN_CLINIC' as const,
@@ -74,7 +74,7 @@ const mockDoctors = [
   },
   {
     name: 'Dr. Kavita Reddy',
-    email: 'kavita.reddy@vidhya.care',
+    email: 'kavita.reddy@vidhyacare.in',
     phone: '+91 90000 44004',
     specializations: ['Orthopedics'],
     workType: 'EMPLOYEE' as const,
@@ -94,7 +94,7 @@ const mockDoctors = [
   },
   {
     name: 'Dr. Rajesh Iyer',
-    email: 'rajesh.iyer@vidhya.care',
+    email: 'rajesh.iyer@vidhyacare.in',
     phone: '+91 98001 55005',
     specializations: ['Pediatrics'],
     workType: 'OWN_CLINIC' as const,
@@ -114,7 +114,7 @@ const mockDoctors = [
   },
   {
     name: 'Dr. Anita Gupta',
-    email: 'anita.gupta@vidhya.care',
+    email: 'anita.gupta@vidhyacare.in',
     phone: '+91 97654 66006',
     specializations: ['Neurology'],
     workType: 'EMPLOYEE' as const,
@@ -134,7 +134,7 @@ const mockDoctors = [
   },
   {
     name: 'Dr. Vikram Bose',
-    email: 'vikram.bose@vidhya.care',
+    email: 'vikram.bose@vidhyacare.in',
     phone: '+91 96543 77007',
     specializations: ['ENT'],
     workType: 'OWN_CLINIC' as const,
@@ -154,7 +154,7 @@ const mockDoctors = [
   },
   {
     name: 'Dr. Meera Joshi',
-    email: 'meera.joshi@vidhya.care',
+    email: 'meera.joshi@vidhyacare.in',
     phone: '+91 95432 88008',
     specializations: ['Psychiatry'],
     workType: 'EMPLOYEE' as const,
@@ -175,7 +175,7 @@ const mockDoctors = [
   },
   {
     name: 'Dr. Santosh Pillai',
-    email: 'santosh.pillai@vidhya.care',
+    email: 'santosh.pillai@vidhyacare.in',
     phone: '+91 94321 99009',
     specializations: ['Ophthalmology'],
     workType: 'OWN_CLINIC' as const,
@@ -196,7 +196,7 @@ const mockDoctors = [
   },
   {
     name: 'Dr. Deepa Menon',
-    email: 'deepa.menon@vidhya.care',
+    email: 'deepa.menon@vidhyacare.in',
     phone: '+91 93210 00010',
     specializations: ['Gynecology'],
     workType: 'EMPLOYEE' as const,

@@ -62,13 +62,13 @@ export function otpEmailTemplate(opts: {
 }): { text: string; html: string } {
   const { heading, intro, otp, expiresInMinutes } = opts;
 
-  const text = `${heading}\n\n${intro}\n\nYour OTP: ${otp}\n\nThis code expires in ${expiresInMinutes} minutes.\n\nIf you did not request this, please ignore this email.\n\n— Vidhya.care`;
+  const text = `${heading}\n\n${intro}\n\nYour OTP: ${otp}\n\nThis code expires in ${expiresInMinutes} minutes.\n\nIf you did not request this, please ignore this email.\n\n— VidhyaCare`;
 
   const html = `
   <div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f8fafc;border-radius:16px;">
     <div style="text-align:center;margin-bottom:24px;">
       <div style="display:inline-block;width:48px;height:48px;line-height:48px;border-radius:12px;background:#2563eb;color:#fff;font-size:24px;font-weight:800;">V</div>
-      <h1 style="margin:12px 0 0;font-size:20px;color:#0f172a;">Vidhya<span style="color:#2563eb;">.care</span></h1>
+      <h1 style="margin:12px 0 0;font-size:20px;color:#0f172a;">Vidhya<span style="color:#2563eb;">Care</span></h1>
     </div>
     <div style="background:#fff;border-radius:12px;padding:28px;border:1px solid #e2e8f0;">
       <h2 style="margin:0 0 8px;font-size:18px;color:#0f172a;">${heading}</h2>
@@ -79,7 +79,7 @@ export function otpEmailTemplate(opts: {
       <p style="margin:0;font-size:13px;color:#94a3b8;text-align:center;">This code expires in <strong>${expiresInMinutes} minutes</strong>.</p>
     </div>
     <p style="margin:24px 0 0;font-size:12px;color:#94a3b8;text-align:center;line-height:1.6;">
-      If you did not request this, you can safely ignore this email.<br/>© ${new Date().getFullYear()} Vidhya.care
+      If you did not request this, you can safely ignore this email.<br/>© ${new Date().getFullYear()} VidhyaCare
     </p>
   </div>`;
 
@@ -105,13 +105,13 @@ export function infoEmailTemplate(opts: {
   };
   const c = colors[accent];
 
-  const text = `${heading}\n\n${body}${note ? `\n\n${note}` : ''}\n\n— Vidhya.care`;
+  const text = `${heading}\n\n${body}${note ? `\n\n${note}` : ''}\n\n— VidhyaCare`;
 
   const html = `
   <div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f8fafc;border-radius:16px;">
     <div style="text-align:center;margin-bottom:24px;">
       <div style="display:inline-block;width:48px;height:48px;line-height:48px;border-radius:12px;background:#2563eb;color:#fff;font-size:24px;font-weight:800;">V</div>
-      <h1 style="margin:12px 0 0;font-size:20px;color:#0f172a;">Vidhya<span style="color:#2563eb;">.care</span></h1>
+      <h1 style="margin:12px 0 0;font-size:20px;color:#0f172a;">Vidhya<span style="color:#2563eb;">Care</span></h1>
     </div>
     <div style="background:#fff;border-radius:12px;padding:28px;border:1px solid #e2e8f0;border-top:4px solid ${c};">
       <h2 style="margin:0 0 12px;font-size:18px;color:#0f172a;">${heading}</h2>
@@ -119,7 +119,7 @@ export function infoEmailTemplate(opts: {
       ${note ? `<div style="margin-top:18px;padding:12px 16px;background:#f1f5f9;border-radius:10px;font-size:13px;color:#64748b;line-height:1.6;">${note}</div>` : ''}
     </div>
     <p style="margin:24px 0 0;font-size:12px;color:#94a3b8;text-align:center;line-height:1.6;">
-      © ${new Date().getFullYear()} Vidhya.care
+      © ${new Date().getFullYear()} VidhyaCare
     </p>
   </div>`;
 

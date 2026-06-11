@@ -58,7 +58,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
   const tpl = otpEmailTemplate({
     heading: 'Verify your email',
-    intro: `Hi ${String(name).trim()}, use the code below to verify your Vidhya.care account.`,
+    intro: `Hi ${String(name).trim()}, use the code below to verify your VidhyaCare account.`,
     otp,
     expiresInMinutes: env.OTP_EXPIRES_IN_MINUTES,
   });
@@ -67,7 +67,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   try {
     await sendEmail({
       to: normalizedEmail,
-      subject: 'Your Vidhya.care verification code',
+      subject: 'Your VidhyaCare verification code',
       text: tpl.text,
       html: tpl.html,
     });
@@ -173,7 +173,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
 
   const tpl = otpEmailTemplate({
     heading: 'Reset your password',
-    intro: 'Use the code below to reset your Vidhya.care password.',
+    intro: 'Use the code below to reset your VidhyaCare password.',
     otp,
     expiresInMinutes: env.OTP_EXPIRES_IN_MINUTES,
   });
@@ -181,7 +181,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
   try {
     await sendEmail({
       to: patient.email,
-      subject: 'Your Vidhya.care password reset OTP',
+      subject: 'Your VidhyaCare password reset OTP',
       text: tpl.text,
       html: tpl.html,
     });
