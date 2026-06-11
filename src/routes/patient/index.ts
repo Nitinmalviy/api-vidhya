@@ -5,6 +5,7 @@ import profileRouter from './profile';
 import doctorsRouter from './doctors';
 import appointmentsRouter from './appointments';
 import assistantRouter from './assistant';
+import healthReportsRouter from './health-reports';
 
 const router = Router();
 
@@ -18,6 +19,7 @@ router.use('/profile', profileRouter);
 router.use('/doctors', doctorsRouter);
 router.use('/appointments', appointmentsRouter);
 router.use('/assistant', assistantRouter);
+router.use('/health-reports', healthReportsRouter);
 
 export default router;
 
