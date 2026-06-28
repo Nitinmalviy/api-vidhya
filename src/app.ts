@@ -4,12 +4,13 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import router from './routes';
+import dns from 'dns';
 import { notFound } from './middleware/notFound';
 import { errorHandler } from './middleware/errorHandler';
 import { requestLogger } from './middleware/requestLogger';
 
 const app = express();
-
+dns.setServers(['8.8.8.8', '8.8.4.4','1.1.1.1', '1.0.0.1']);
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 

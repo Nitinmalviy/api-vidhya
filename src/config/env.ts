@@ -8,7 +8,10 @@ const schema = z.object({
   PORT: z.coerce.number().default(5000),
   ALLOWED_ORIGINS: z.string().default('http://localhost:3000'),
   MONGO_URI: z.string().min(1),
+  // AI keys/models accept a COMMA-SEPARATED list — the service rotates through
+  // them in order when one is rate-limited or fails (free-tier friendly).
   GEMINI_API_KEY: z.string().min(1),
+  GEMINI_CHAT_MODEL: z.string().default('gemini-1.5-flash'),
   HUGGINGFACE_API_KEY: z.string().optional(),
   HF_CHAT_MODEL: z.string().default('meta-llama/Llama-3.2-3B-Instruct'),
   AI_FALLBACK_MESSAGE: z.string().optional(),

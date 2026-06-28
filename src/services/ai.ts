@@ -23,100 +23,191 @@ const FALLBACK_MESSAGE =
     'Meanwhile, you can browse verified doctors in the Doctors tab and book an appointment, ' +
     'or try asking me again in a few minutes. If this is an emergency, please call 108 or visit the nearest hospital.';
 
-/**
- * A pluggable chat model. Providers are tried in order; the first one that is
- * configured and returns text wins. To add a new model (e.g. another Hugging
- * Face model), implement this interface and append it to PROVIDERS below.
- */
-export interface AiProvider {
-  name: string;
-  isAvailable(): boolean;
-  generate(history: ChatTurn[], userMessage: string, systemPrompt?: string): Promise<string>;
+/* ────────────────────────────────────────────────────────────────────
+   Helpers
+──────────────────────────────────────────────────────────────────── */
+
+/** Split a comma/space/newline-separated env value into a clean list. */
+function parseList(value?: string): string[] {
+  if (!value) return [];
+  return value
+    .split(/[\n,]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
-/* ── Provider 1: Google Gemini ── */
+/** Show only the last 4 chars of a secret in logs. */
+function maskKey(key: string): string {
+  return key.length <= 4 ? '****' : `…${key.slice(-4)}`;
+}
 
-let geminiClient: GoogleGenerativeAI | null = null;
+/** Classify an error so the console clearly says WHY a provider failed. */
+function classify(err: unknown): { tag: string; detail: string } {
+  const msg = err instanceof Error ? err.message : String(err);
+  const lower = msg.toLowerCase();
+  if (lower.includes('429') || lower.includes('quota') || lower.includes('resource_exhausted') || lower.includes('rate limit')) {
+    return { tag: 'RATE-LIMIT/QUOTA', detail: msg.slice(0, 160) };
+  }
+  if (lower.includes('401') || lower.includes('403') || lower.includes('unauthorized') || lower.includes('permission') || lower.includes('invalid api key')) {
+    return { tag: 'BAD-KEY/AUTH', detail: msg.slice(0, 160) };
+  }
+  if (lower.includes('timeout') || lower.includes('aborted')) {
+    return { tag: 'TIMEOUT', detail: msg.slice(0, 160) };
+  }
+  if (lower.includes('404') || lower.includes('not found') || lower.includes('does not exist')) {
+    return { tag: 'MODEL-NOT-FOUND', detail: msg.slice(0, 160) };
+  }
+  return { tag: 'ERROR', detail: msg.slice(0, 200) };
+}
 
-const gemini: AiProvider = {
-  name: 'gemini',
-  isAvailable: () => Boolean(env.GEMINI_API_KEY),
-  async generate(history, userMessage, systemPrompt) {
-    if (!geminiClient) geminiClient = new GoogleGenerativeAI(env.GEMINI_API_KEY);
-    const model = geminiClient.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      systemInstruction: systemPrompt ?? SYSTEM_PROMPT,
-    });
+/* ────────────────────────────────────────────────────────────────────
+   Attempts — one entry per (provider × key × model).
+   The chain tries them in order until one returns text.
+──────────────────────────────────────────────────────────────────── */
 
-    const contents = history.slice(-12).map((t) => ({
-      role: t.role === 'ai' ? 'model' : 'user',
-      parts: [{ text: t.text }],
-    }));
-    contents.push({ role: 'user', parts: [{ text: userMessage }] });
-
-    const result = await model.generateContent({ contents });
-    return result.response.text().trim();
-  },
+type Attempt = {
+  provider: string;
+  /** Human label for logs, e.g. "gemini-1.5-flash · key …a1b2" */
+  label: string;
+  run: (history: ChatTurn[], userMessage: string, systemPrompt: string) => Promise<string>;
 };
 
-/* ── Provider 2: Hugging Face (OpenAI-compatible router) ── */
+// Cache one Gemini client per API key.
+const geminiClients = new Map<string, GoogleGenerativeAI>();
+function geminiClient(key: string): GoogleGenerativeAI {
+  let c = geminiClients.get(key);
+  if (!c) {
+    c = new GoogleGenerativeAI(key);
+    geminiClients.set(key, c);
+  }
+  return c;
+}
 
-const huggingface: AiProvider = {
-  name: 'huggingface',
-  isAvailable: () => Boolean(env.HUGGINGFACE_API_KEY),
-  async generate(history, userMessage, systemPrompt) {
-    const messages = [
-      { role: 'system', content: systemPrompt ?? SYSTEM_PROMPT },
-      ...history.slice(-12).map((t) => ({
-        role: t.role === 'ai' ? 'assistant' : 'user',
-        content: t.text,
-      })),
-      { role: 'user', content: userMessage },
-    ];
+function buildAttempts(): Attempt[] {
+  const attempts: Attempt[] = [];
 
-    const res = await fetch('https://router.huggingface.co/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${env.HUGGINGFACE_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: env.HF_CHAT_MODEL,
-        messages,
-        max_tokens: 300,
-        temperature: 0.6,
-      }),
-      signal: AbortSignal.timeout(20_000),
-    });
-
-    if (!res.ok) {
-      throw new Error(`Hugging Face responded ${res.status}: ${(await res.text()).slice(0, 200)}`);
-    }
-    const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
-    return (json.choices?.[0]?.message?.content ?? '').trim();
-  },
-};
-
-/** Ordered fallback chain — first available provider that answers wins. */
-const PROVIDERS: AiProvider[] = [gemini, huggingface];
-
-/**
- * Generate an AI reply given the prior conversation + the new user message.
- * Tries each configured provider in order; if all fail, returns the custom
- * fallback message instead of throwing, so chat always responds.
- */
-export async function generateAiReply(history: ChatTurn[], userMessage: string): Promise<string> {
-  for (const provider of PROVIDERS) {
-    if (!provider.isAvailable()) continue;
-    try {
-      const text = await provider.generate(history, userMessage);
-      if (text) return text;
-      logger.warn({ provider: provider.name }, 'AI provider returned empty response');
-    } catch (err) {
-      logger.error({ err, provider: provider.name }, 'AI provider failed, trying next');
+  // ── Gemini: every key × every model ──
+  const geminiKeys = parseList(env.GEMINI_API_KEY);
+  const geminiModels = parseList(env.GEMINI_CHAT_MODEL);
+  for (const key of geminiKeys) {
+    for (const modelName of geminiModels) {
+      attempts.push({
+        provider: 'gemini',
+        label: `${modelName} · key ${maskKey(key)}`,
+        run: async (history, userMessage, systemPrompt) => {
+          const model = geminiClient(key).getGenerativeModel({
+            model: modelName,
+            systemInstruction: systemPrompt,
+          });
+          const contents = history.slice(-12).map((t) => ({
+            role: t.role === 'ai' ? 'model' : 'user',
+            parts: [{ text: t.text }],
+          }));
+          contents.push({ role: 'user', parts: [{ text: userMessage }] });
+          const result = await model.generateContent({ contents });
+          return result.response.text().trim();
+        },
+      });
     }
   }
-  return FALLBACK_MESSAGE;
+
+  // ── Hugging Face: every key × every model (OpenAI-compatible router) ──
+  const hfKeys = parseList(env.HUGGINGFACE_API_KEY);
+  const hfModels = parseList(env.HF_CHAT_MODEL);
+  for (const key of hfKeys) {
+    for (const modelName of hfModels) {
+      attempts.push({
+        provider: 'huggingface',
+        label: `${modelName} · key ${maskKey(key)}`,
+        run: async (history, userMessage, systemPrompt) => {
+          const messages = [
+            { role: 'system', content: systemPrompt },
+            ...history.slice(-12).map((t) => ({
+              role: t.role === 'ai' ? 'assistant' : 'user',
+              content: t.text,
+            })),
+            { role: 'user', content: userMessage },
+          ];
+          const res = await fetch('https://router.huggingface.co/v1/chat/completions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+            body: JSON.stringify({ model: modelName, messages, max_tokens: 300, temperature: 0.6 }),
+            signal: AbortSignal.timeout(20_000),
+          });
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+          }
+          const json = (await res.json()) as { choices?: { message?: { content?: string } }[] };
+          return (json.choices?.[0]?.message?.content ?? '').trim();
+        },
+      });
+    }
+  }
+
+  return attempts;
+}
+
+const ATTEMPTS = buildAttempts();
+
+// Log the configuration once at startup so you can see what's wired up.
+logger.info(
+  `[VidhyaAI] Configured ${ATTEMPTS.length} model attempt(s): ${
+    ATTEMPTS.map((a) => `${a.provider}(${a.label})`).join(' → ') || 'NONE — check GEMINI_API_KEY / HUGGINGFACE_API_KEY in .env'
+  }`
+);
+
+/* ────────────────────────────────────────────────────────────────────
+   Core chain — tries each attempt in order, logging every step.
+──────────────────────────────────────────────────────────────────── */
+
+async function runChain(
+  purpose: string,
+  history: ChatTurn[],
+  userMessage: string,
+  systemPrompt: string
+): Promise<string | null> {
+  logger.info(
+    `[VidhyaAI] ▶ (${purpose}) request received | msg="${userMessage.slice(0, 60)}${
+      userMessage.length > 60 ? '…' : ''
+    }" | history=${history.length} turn(s) | ${ATTEMPTS.length} provider attempt(s) available`
+  );
+
+  if (ATTEMPTS.length === 0) {
+    logger.error('[VidhyaAI] ✗ No providers configured — set GEMINI_API_KEY (and optionally HUGGINGFACE_API_KEY) in .env');
+    return null;
+  }
+
+  for (let i = 0; i < ATTEMPTS.length; i++) {
+    const a = ATTEMPTS[i];
+    const step = `${i + 1}/${ATTEMPTS.length}`;
+    const t0 = Date.now();
+    logger.info(`[VidhyaAI] → [${step}] trying ${a.provider} | ${a.label}`);
+    try {
+      const text = (await a.run(history, userMessage, systemPrompt)).trim();
+      const ms = Date.now() - t0;
+      if (text) {
+        logger.info(`[VidhyaAI] ✓ [${step}] ${a.provider} replied in ${ms}ms (${text.length} chars) — using this`);
+        return text;
+      }
+      logger.warn(`[VidhyaAI] ⚠ [${step}] ${a.provider} returned EMPTY in ${ms}ms — trying next`);
+    } catch (err) {
+      const ms = Date.now() - t0;
+      const { tag, detail } = classify(err);
+      logger.error(`[VidhyaAI] ✗ [${step}] ${a.provider} FAILED in ${ms}ms [${tag}]: ${detail} — trying next`);
+    }
+  }
+
+  logger.error(`[VidhyaAI] ✗ (${purpose}) ALL ${ATTEMPTS.length} attempt(s) failed — using fallback`);
+  return null;
+}
+
+/**
+ * Generate an AI reply for chat. Always resolves to a string: the custom
+ * fallback message is returned if every provider fails.
+ */
+export async function generateAiReply(history: ChatTurn[], userMessage: string): Promise<string> {
+  const text = await runChain('chat', history, userMessage, SYSTEM_PROMPT);
+  return text ?? FALLBACK_MESSAGE;
 }
 
 /* ── Health report generation ── */
@@ -178,17 +269,5 @@ export async function generateHealthAnalysis(input: HealthReportInput): Promise<
     'Write the health report now.',
   ].filter(Boolean);
 
-  const message = lines.join('\n');
-
-  for (const provider of PROVIDERS) {
-    if (!provider.isAvailable()) continue;
-    try {
-      const text = await provider.generate([], message, REPORT_SYSTEM_PROMPT);
-      if (text) return text;
-      logger.warn({ provider: provider.name }, 'AI provider returned empty report');
-    } catch (err) {
-      logger.error({ err, provider: provider.name }, 'AI report generation failed, trying next');
-    }
-  }
-  return null;
+  return runChain('health-report', [], lines.join('\n'), REPORT_SYSTEM_PROMPT);
 }
