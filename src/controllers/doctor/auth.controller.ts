@@ -5,7 +5,6 @@ import { Clinic } from '../../models/Clinic';
 import { uploadBase64ToCloudinary } from '../../services/cloudinaryUpload';
 import { sendEmail, otpEmailTemplate } from '../../services/email';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt';
-import { generateRandomToken } from '../../utils/tokens';
 import { generateOtp, hashOtp, otpExpiresAt } from '../../utils/otp';
 import { BadRequestError, ConflictError, ForbiddenError, UnauthorizedError } from '../../utils/AppError';
 import { createNotification } from '../../services/notification';
@@ -264,16 +263,27 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
     return;
   }
 
-  const { token, tokenHash } = generateRandomToken();
-  doctor.passwordResetTokenHash = tokenHash;
-  doctor.passwordResetExpires = new Date(Date.now() + 1000 * 60 * 15); // 15 minutes
+  const otp = generateOtp();
+  doctor.passwordResetTokenHash = hashOtp(otp); // sha256(otp) — matches reset-password
+  doctor.passwordResetExpires = otpExpiresAt();
   await doctor.save();
 
-  await sendEmail({
-    to: doctor.email,
-    subject: 'Doctor password reset',
-    text: `Your password reset code: ${token}`,
+  const tpl = otpEmailTemplate({
+    heading: 'Reset your password',
+    intro: `Hi ${doctor.name}, use the code below to reset your VidhyaCare doctor account password.`,
+    otp,
+    expiresInMinutes: env.OTP_EXPIRES_IN_MINUTES,
   });
+  try {
+    await sendEmail({
+      to: doctor.email,
+      subject: 'Your VidhyaCare password reset code',
+      text: tpl.text,
+      html: tpl.html,
+    });
+  } catch (err) {
+    logger.error({ err, email: doctor.email }, 'Doctor forgot-password: email failed');
+  }
 
   res.status(200).json({ success: true, message: 'If the email exists, a reset code was sent' });
 };
