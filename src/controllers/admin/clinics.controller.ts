@@ -1,5 +1,6 @@
 import type { Request, Response } from 'express';
 import { Clinic } from '../../models/Clinic';
+import { signFieldsArray } from '../../services/presignedUrl';
 
 /**
  * GET /api/v1/admin/clinics
@@ -7,10 +8,11 @@ import { Clinic } from '../../models/Clinic';
  */
 export const getClinics = async (req: Request, res: Response): Promise<void> => {
   try {
-    // In a full implementation, you would aggregate doctors and patients per clinic here.
-    // For now, we fetch the clinics directly.
     const clinics = await Clinic.find()
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
+
+    await signFieldsArray(clinics, ['photoUrl']);
 
     res.status(200).json({ success: true, data: { clinics } });
   } catch (error) {

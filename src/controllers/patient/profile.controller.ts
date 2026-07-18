@@ -5,6 +5,8 @@ import { HealthRecord, type HealthRecordType } from '../../models/HealthRecord';
 import { Patient, type IPatient, type PatientGender } from '../../models/Patient';
 import type { AuthRequest } from '../../types';
 import { BadRequestError, NotFoundError, UnauthorizedError } from '../../utils/AppError';
+import { uploadBase64ToS3, deleteFromS3 } from '../../services/s3Upload';
+import { signFieldsArray } from '../../services/presignedUrl';
 
 const GENDERS: PatientGender[] = ['MALE', 'FEMALE', 'OTHER'];
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
@@ -174,13 +176,17 @@ export const listRecords = async (req: AuthRequest, res: Response): Promise<void
     .sort({ date: -1 })
     .limit(200)
     .lean();
+
+  // Sign S3-key fields with presigned URLs
+  await signFieldsArray(records, ['fileUrl']);
+
   res.status(200).json({ success: true, data: { records } });
 };
 
-/* POST /api/v1/patient/profile/records  { title, type, date?, notes?, fileUrl? } */
+/* POST /api/v1/patient/profile/records  { title, type, date?, notes?, file? } */
 export const addRecord = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
-  const { title, type, date, notes, fileUrl } = req.body ?? {};
+  const { title, type, date, notes, file, fileUrl: legacyFileUrl } = req.body ?? {};
 
   const cleanTitle = String(title ?? '').trim();
   if (!cleanTitle) throw new BadRequestError('Record title is required');
@@ -192,16 +198,27 @@ export const addRecord = async (req: AuthRequest, res: Response): Promise<void> 
     if (Number.isNaN(recordDate.getTime())) throw new BadRequestError('Invalid record date');
   }
 
+  // Upload file to S3 if provided as base64
+  let s3Key: string | undefined;
+  if (file) {
+    s3Key = await uploadBase64ToS3(file, 'health-records');
+    if (!s3Key) throw new BadRequestError('File upload failed — check file type and size (max 10MB images, 25MB PDFs)');
+  }
+
   const record = await HealthRecord.create({
     patientId: req.user.id,
     title: cleanTitle.slice(0, 120),
     type: type ?? 'OTHER',
     ...(recordDate ? { date: recordDate } : {}),
     ...(notes ? { notes: String(notes).trim().slice(0, 1000) } : {}),
-    ...(fileUrl ? { fileUrl: String(fileUrl).trim().slice(0, 500) } : {}),
+    ...(s3Key ? { fileUrl: s3Key } : legacyFileUrl ? { fileUrl: String(legacyFileUrl).trim().slice(0, 500) } : {}),
   });
 
-  res.status(201).json({ success: true, message: 'Record added', data: { record } });
+  // Return the record with a signed URL
+  const recordObj = record.toObject();
+  await signFieldsArray([recordObj], ['fileUrl']);
+
+  res.status(201).json({ success: true, message: 'Record added', data: { record: recordObj } });
 };
 
 /* DELETE /api/v1/patient/profile/records/:id */
@@ -212,6 +229,10 @@ export const deleteRecord = async (req: AuthRequest, res: Response): Promise<voi
     patientId: req.user.id,
   });
   if (!deleted) throw new NotFoundError('Record');
+
+  // Clean up S3 file if it exists
+  if (deleted.fileUrl) await deleteFromS3(deleted.fileUrl);
+
   res.status(200).json({ success: true, message: 'Record deleted' });
 };
 

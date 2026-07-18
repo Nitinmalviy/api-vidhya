@@ -13,3 +13,9 @@ export const s3Client = isS3Configured()
       },
     })
   : undefined;
+
+/** The bucket name — safe to reference after isS3Configured() check */
+export const S3_BUCKET = env.AWS_S3_BUCKET_NAME ?? '';
+
+/** The region — needed for presigned URL generation */
+export const S3_REGION = env.AWS_REGION ?? '';

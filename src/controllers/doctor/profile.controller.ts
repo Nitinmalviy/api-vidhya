@@ -3,10 +3,18 @@ import { Doctor } from '../../models/Doctor';
 import { Clinic } from '../../models/Clinic';
 import type { AuthRequest } from '../../types';
 import { BadRequestError, NotFoundError, UnauthorizedError } from '../../utils/AppError';
-import { uploadBase64ToS3 } from '../../services/s3Upload';
+import { uploadBase64ToS3, deleteFromS3 } from '../../services/s3Upload';
+import { signFields } from '../../services/presignedUrl';
 import { sendEmail, infoEmailTemplate } from '../../services/email';
 import { createNotification } from '../../services/notification';
 import { logger } from '../../utils/logger';
+
+/** S3-key fields to sign with presigned URLs in doctor responses */
+const DOCTOR_URL_FIELDS = [
+  'degreeDetails.documentUrl',
+  'licenseDetails.documentUrl',
+  'photoUrl',
+];
 
 /* ─────────────────────────────────────────────
    GET /api/v1/doctor/profile
@@ -22,26 +30,28 @@ export const getProfile = async (req: AuthRequest, res: Response): Promise<void>
 
   if (!doctor) throw new NotFoundError('Doctor not found');
 
-  res.status(200).json({
-    success: true,
-    data: {
-      id: doctor._id,
-      // Public profile
-      name: doctor.name,
-      email: doctor.email,
-      phone: doctor.phone,
-      specializations: doctor.specializations ?? [],
-      workType: doctor.workType,
-      clinic: doctor.clinicId ?? null,
-      // KYC details
-      kycStatus: doctor.kycStatus,
-      adminRemarks: doctor.adminRemarks ?? null,
-      isEmailVerified: doctor.isEmailVerified,
-      degreeDetails: doctor.degreeDetails ?? null,
-      licenseDetails: doctor.licenseDetails ?? null,
-      createdAt: (doctor as { createdAt?: Date }).createdAt ?? null,
-    },
-  });
+  const data: Record<string, unknown> = {
+    id: doctor._id,
+    // Public profile
+    name: doctor.name,
+    email: doctor.email,
+    phone: doctor.phone,
+    specializations: doctor.specializations ?? [],
+    workType: doctor.workType,
+    clinic: doctor.clinicId ?? null,
+    // KYC details
+    kycStatus: doctor.kycStatus,
+    adminRemarks: doctor.adminRemarks ?? null,
+    isEmailVerified: doctor.isEmailVerified,
+    degreeDetails: doctor.degreeDetails ?? null,
+    licenseDetails: doctor.licenseDetails ?? null,
+    createdAt: (doctor as { createdAt?: Date }).createdAt ?? null,
+  };
+
+  // Sign S3-key fields with presigned URLs
+  await signFields(data, DOCTOR_URL_FIELDS);
+
+  res.status(200).json({ success: true, data });
 };
 
 /* ─────────────────────────────────────────────
@@ -82,24 +92,24 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
     .lean()
     .exec();
 
-  res.status(200).json({
-    success: true,
-    message: 'Profile updated',
-    data: {
-      id: updated!._id,
-      name: updated!.name,
-      email: updated!.email,
-      phone: updated!.phone,
-      specializations: updated!.specializations ?? [],
-      workType: updated!.workType,
-      clinic: updated!.clinicId ?? null,
-      kycStatus: updated!.kycStatus,
-      adminRemarks: updated!.adminRemarks ?? null,
-      isEmailVerified: updated!.isEmailVerified,
-      degreeDetails: updated!.degreeDetails ?? null,
-      licenseDetails: updated!.licenseDetails ?? null,
-    },
-  });
+  const profileData: Record<string, unknown> = {
+    id: updated!._id,
+    name: updated!.name,
+    email: updated!.email,
+    phone: updated!.phone,
+    specializations: updated!.specializations ?? [],
+    workType: updated!.workType,
+    clinic: updated!.clinicId ?? null,
+    kycStatus: updated!.kycStatus,
+    adminRemarks: updated!.adminRemarks ?? null,
+    isEmailVerified: updated!.isEmailVerified,
+    degreeDetails: updated!.degreeDetails ?? null,
+    licenseDetails: updated!.licenseDetails ?? null,
+  };
+
+  await signFields(profileData, DOCTOR_URL_FIELDS);
+
+  res.status(200).json({ success: true, message: 'Profile updated', data: profileData });
 };
 
 /* ─────────────────────────────────────────────
@@ -126,9 +136,14 @@ export const updateKyc = async (req: AuthRequest, res: Response): Promise<void> 
   // ── Degree ──
   if (degreeName || university || passingYear || degreeFile) {
     const existingDoc = doctor.degreeDetails;
-    const degreeUrl = degreeFile
-      ? await uploadBase64ToS3(degreeFile, 'doctor-kyc')
-      : existingDoc?.documentUrl;
+    let degreeUrl: string | undefined;
+    if (degreeFile) {
+      degreeUrl = await uploadBase64ToS3(degreeFile, 'doctor-kyc');
+      // Delete the old file from S3 if a new one was uploaded
+      if (degreeUrl && existingDoc?.documentUrl) await deleteFromS3(existingDoc.documentUrl);
+    } else {
+      degreeUrl = existingDoc?.documentUrl;
+    }
 
     if (!degreeUrl) {
       throw new BadRequestError('Degree document is required');
@@ -145,9 +160,13 @@ export const updateKyc = async (req: AuthRequest, res: Response): Promise<void> 
   // ── License ──
   if (licenseNumber || expiryDate || licenseFile) {
     const existingLic = doctor.licenseDetails;
-    const licenseUrl = licenseFile
-      ? await uploadBase64ToS3(licenseFile, 'doctor-kyc')
-      : existingLic?.documentUrl;
+    let licenseUrl: string | undefined;
+    if (licenseFile) {
+      licenseUrl = await uploadBase64ToS3(licenseFile, 'doctor-kyc');
+      if (licenseUrl && existingLic?.documentUrl) await deleteFromS3(existingLic.documentUrl);
+    } else {
+      licenseUrl = existingLic?.documentUrl;
+    }
 
     if (!licenseUrl) {
       throw new BadRequestError('License document is required');
@@ -192,22 +211,58 @@ export const updateKyc = async (req: AuthRequest, res: Response): Promise<void> 
     .lean()
     .exec();
 
+  const kycData: Record<string, unknown> = {
+    id: updated!._id,
+    name: updated!.name,
+    email: updated!.email,
+    phone: updated!.phone,
+    specializations: updated!.specializations ?? [],
+    workType: updated!.workType,
+    clinic: updated!.clinicId ?? null,
+    kycStatus: updated!.kycStatus,
+    adminRemarks: updated!.adminRemarks ?? null,
+    isEmailVerified: updated!.isEmailVerified,
+    degreeDetails: updated!.degreeDetails ?? null,
+    licenseDetails: updated!.licenseDetails ?? null,
+  };
+
+  await signFields(kycData, DOCTOR_URL_FIELDS);
+
   res.status(200).json({
     success: true,
     message: 'KYC details updated. Your profile has been re-submitted for verification.',
-    data: {
-      id: updated!._id,
-      name: updated!.name,
-      email: updated!.email,
-      phone: updated!.phone,
-      specializations: updated!.specializations ?? [],
-      workType: updated!.workType,
-      clinic: updated!.clinicId ?? null,
-      kycStatus: updated!.kycStatus,
-      adminRemarks: updated!.adminRemarks ?? null,
-      isEmailVerified: updated!.isEmailVerified,
-      degreeDetails: updated!.degreeDetails ?? null,
-      licenseDetails: updated!.licenseDetails ?? null,
-    },
+    data: kycData,
+  });
+};
+
+/* ─────────────────────────────────────────────
+   POST /api/v1/doctor/profile/photo
+   Upload / replace a doctor's profile photo.
+───────────────────────────────────────────── */
+export const uploadProfilePhoto = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+
+  const { photo } = req.body ?? {}; // base64 data-URI
+  if (!photo) throw new BadRequestError('photo (base64) is required');
+
+  const doctor = await Doctor.findById(req.user.id).exec();
+  if (!doctor) throw new NotFoundError('Doctor not found');
+
+  const newKey = await uploadBase64ToS3(photo, 'profile');
+  if (!newKey) throw new BadRequestError('Photo upload failed — check file type and size');
+
+  // Delete old photo if it exists
+  if (doctor.photoUrl) await deleteFromS3(doctor.photoUrl);
+
+  doctor.photoUrl = newKey;
+  await doctor.save();
+
+  const { getPresignedUrl } = await import('../../services/presignedUrl');
+  const signedUrl = await getPresignedUrl(newKey);
+
+  res.status(200).json({
+    success: true,
+    message: 'Profile photo updated',
+    data: { photoUrl: signedUrl },
   });
 };

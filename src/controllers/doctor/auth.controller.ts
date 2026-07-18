@@ -30,6 +30,8 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     expiryDate,
     licenseFile,
     clinicPhotoFile,
+    consultationFee,
+    yearsExperience,
   } = req.body ?? {};
 
   // ── Validate everything BEFORE creating records / uploading files ──
@@ -65,6 +67,8 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     workType,
     clinicId: clinicId || undefined,
     specializations: Array.isArray(specializations) ? specializations : [],
+    consultationFee: Number.isFinite(Number(consultationFee)) ? Math.max(0, Number(consultationFee)) : undefined,
+    yearsExperience: Number.isFinite(Number(yearsExperience)) ? Math.max(0, Number(yearsExperience)) : undefined,
     kycStatus: 'PENDING',
     isEmailVerified: false,
     emailVerificationTokenHash: otpHash,

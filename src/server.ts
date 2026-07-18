@@ -1,11 +1,12 @@
 import app from './app';
 import { env } from './config/env';
 import { connectDB } from './config/database';
-import { configureCloudinary } from './config/cloudinary';
+import { runtimeSeed } from './scripts/runtime-seed';
 import { logger } from './utils/logger';
 
-configureCloudinary();
-connectDB().catch((err: Error) => logger.error({ err }, 'DB connection failed'));
+connectDB()
+  .then(() => runtimeSeed())
+  .catch((err: Error) => logger.error({ err }, 'DB connection failed'));
 
 // Local development only — Vercel handles the HTTP server in production
 if (!process.env.VERCEL) {

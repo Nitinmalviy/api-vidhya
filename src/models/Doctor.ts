@@ -35,6 +35,12 @@ export interface IDoctor {
   licenseDetails?: ILicenseDetails;
   specializations: string[];
 
+  // Public profile
+  consultationFee?: number;
+  photoUrl?: string;
+  yearsExperience?: number;
+  bio?: string;
+
   // Employment
   workType: DoctorWorkType;
   clinicId?: Types.ObjectId;
@@ -102,6 +108,28 @@ const doctorSchema = new Schema<IDoctor>(
     specializations: {
       type: [String],
       default: [],
+    },
+    consultationFee: {
+      type: Number,
+      required: false,
+      min: 0,
+    },
+    photoUrl: {
+      type: String,
+      required: false,
+      trim: true,
+    },
+    yearsExperience: {
+      type: Number,
+      required: false,
+      min: 0,
+      max: 60,
+    },
+    bio: {
+      type: String,
+      required: false,
+      trim: true,
+      maxlength: 1000,
     },
     workType: {
       type: String,
