@@ -12,6 +12,21 @@ import { createNotification } from '../../services/notification';
 import { env } from '../../config/env';
 import { logger } from '../../utils/logger';
 
+export const checkEmail = async (req: Request, res: Response): Promise<void> => {
+  const { email } = req.body;
+  if (!email) {
+    throw new BadRequestError('Email is required');
+  }
+
+  const existing = await Doctor.findOne({ email: email.toLowerCase().trim() });
+  if (existing) {
+    res.status(200).json({ success: true, exists: true });
+    return;
+  }
+  
+  res.status(200).json({ success: true, exists: false });
+};
+
 export const register = async (req: Request, res: Response): Promise<void> => {
   const {
     name,
