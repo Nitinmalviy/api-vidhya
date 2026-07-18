@@ -1,18 +1,16 @@
 import type { Request, Response } from 'express';
-// import Razorpay from 'razorpay';
-// import crypto from 'crypto';
+import Razorpay from 'razorpay';
+import crypto from 'crypto';
 import { Transaction } from '../models/Transaction';
 import { Patient } from '../models/Patient';
 import { Appointment } from '../models/Appointment';
 import { Types } from 'mongoose';
 
 // Initialize Razorpay with environment variables or fallback test keys
-/*
 const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_mock_key',
-  key_secret: process.env.RAZORPAY_KEY_SECRET || 'rzp_test_mock_secret',
+  key_id: process.env.Test_Key_ID || process.env.RAZORPAY_KEY_ID || 'rzp_test_mock_key',
+  key_secret: process.env.Test_Key_Secret || process.env.RAZORPAY_KEY_SECRET || 'rzp_test_mock_secret',
 });
-*/
 
 /**
  * POST /api/v1/payments/create-order
@@ -35,13 +33,8 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
       receipt: `receipt_${Date.now()}_${patientId}`,
     };
 
-    let orderId = `order_mock_${Date.now()}`;
-    
-    // In a real env with real keys, uncomment this:
-    /*
     const order = await razorpay.orders.create(options);
-    orderId = order.id;
-    */
+    const orderId = order.id;
 
     // Create a pending transaction in DB
     const transaction = await Transaction.create({
@@ -60,7 +53,7 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
         orderId,
         amount: options.amount,
         currency: options.currency,
-        key: process.env.RAZORPAY_KEY_ID || 'rzp_test_mock_key',
+        key: process.env.Test_Key_ID || process.env.RAZORPAY_KEY_ID || 'rzp_test_mock_key',
         transactionId: transaction._id,
       },
     });
@@ -79,10 +72,8 @@ export const verifyPayment = async (req: Request, res: Response): Promise<void> 
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
 
     // Validate Signature
-    // const secret = process.env.RAZORPAY_KEY_SECRET || 'rzp_test_mock_secret';
+    const secret = process.env.Test_Key_Secret || process.env.RAZORPAY_KEY_SECRET || 'rzp_test_mock_secret';
     
-    // In a real environment, we'd verify the signature:
-    /*
     const body = razorpay_order_id + "|" + razorpay_payment_id;
     const expectedSignature = crypto
       .createHmac('sha256', secret)
@@ -93,7 +84,6 @@ export const verifyPayment = async (req: Request, res: Response): Promise<void> 
       res.status(400).json({ success: false, message: 'Invalid signature' });
       return;
     }
-    */
 
     // Find and update transaction
     const transaction = await Transaction.findOneAndUpdate(
