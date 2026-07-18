@@ -7,6 +7,7 @@ import { generateOtp, hashOtp, otpExpiresAt } from '../../utils/otp';
 import { BadRequestError, ConflictError, ForbiddenError, UnauthorizedError } from '../../utils/AppError';
 import { env } from '../../config/env';
 import { logger } from '../../utils/logger';
+import { assertValidEmail, assertStrongPassword, assertValidPhone } from '../../utils/validation';
 
 /* ─────────────────────────────────────────────
    POST /api/patient/auth/register
@@ -17,11 +18,10 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   if (!name || !email || !phone || !password) {
     throw new BadRequestError('name, email, phone, and password are required');
   }
-  if (String(password).length < 8) {
-    throw new BadRequestError('Password must be at least 8 characters');
-  }
+  assertStrongPassword(password);
+  assertValidPhone(phone);
 
-  const normalizedEmail = String(email).toLowerCase().trim();
+  const normalizedEmail = assertValidEmail(email);
 
   const otp = generateOtp();
   const otpHash = hashOtp(otp);
@@ -266,9 +266,7 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
   if (!resetToken || !newPassword) {
     throw new BadRequestError('resetToken and newPassword are required');
   }
-  if (String(newPassword).length < 8) {
-    throw new BadRequestError('Password must be at least 8 characters');
-  }
+  assertStrongPassword(newPassword);
 
   let payload: { id: string; purpose: string };
   try {

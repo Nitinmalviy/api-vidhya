@@ -7,6 +7,7 @@ import { sendEmail, otpEmailTemplate } from '../../services/email';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt';
 import { generateOtp, hashOtp, otpExpiresAt } from '../../utils/otp';
 import { BadRequestError, ConflictError, ForbiddenError, UnauthorizedError } from '../../utils/AppError';
+import { assertValidEmail, assertStrongPassword, assertValidPhone } from '../../utils/validation';
 import { createNotification } from '../../services/notification';
 import { env } from '../../config/env';
 import { logger } from '../../utils/logger';
@@ -38,11 +39,10 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   if (workType !== 'OWN_CLINIC' && workType !== 'EMPLOYEE') {
     throw new BadRequestError("workType must be 'OWN_CLINIC' or 'EMPLOYEE'");
   }
-  if (String(password).length < 8) {
-    throw new BadRequestError('Password must be at least 8 characters');
-  }
+  assertStrongPassword(password);
+  assertValidPhone(phone);
 
-  const normalizedEmail = String(email).toLowerCase().trim();
+  const normalizedEmail = assertValidEmail(email);
   const existing = await Doctor.findOne({ email: normalizedEmail }).lean().exec();
   if (existing) throw new ConflictError('An account with this email already exists');
 
@@ -305,6 +305,7 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
 
   if (!doctor) throw new BadRequestError('Invalid or expired reset code');
 
+  assertStrongPassword(newPassword);
   doctor.password = String(newPassword);
   doctor.passwordResetTokenHash = undefined;
   doctor.passwordResetExpires = undefined;

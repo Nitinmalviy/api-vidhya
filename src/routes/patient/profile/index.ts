@@ -6,6 +6,7 @@ import {
   deleteRecord,
   getProfile,
   listRecords,
+  subscribe,
   updateProfile,
 } from '../../../controllers/patient/profile.controller';
 import { authenticate, authorize } from '../../../middleware/auth';
@@ -18,6 +19,7 @@ router.get('/', getProfile);
 router.put('/', updateProfile);
 router.delete('/', deleteAccount);
 router.put('/password', changePassword);
+router.post('/subscribe', subscribe);
 
 router.get('/records', listRecords);
 router.post('/records', addRecord);

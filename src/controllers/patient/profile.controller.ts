@@ -214,3 +214,33 @@ export const deleteRecord = async (req: AuthRequest, res: Response): Promise<voi
   if (!deleted) throw new NotFoundError('Record');
   res.status(200).json({ success: true, message: 'Record deleted' });
 };
+
+/* ─────────────────────────────────────────────
+   POST /api/v1/patient/profile/subscribe
+   Activates a premium plan. Payment is collected client-side
+   (mock checkout for now); this flips the account to PREMIUM.
+───────────────────────────────────────────── */
+const PLAN_IDS = ['single', 'family'] as const;
+
+export const subscribe = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+  const { planId } = req.body ?? {};
+  if (!PLAN_IDS.includes(planId)) {
+    throw new BadRequestError("planId must be 'single' or 'family'");
+  }
+
+  const patient = await Patient.findByIdAndUpdate(
+    req.user.id,
+    { plan: 'PREMIUM' },
+    { new: true }
+  )
+    .select('plan')
+    .lean();
+  if (!patient) throw new NotFoundError('Patient');
+
+  res.status(200).json({
+    success: true,
+    message: 'Subscription active',
+    data: { plan: patient.plan, planId },
+  });
+};

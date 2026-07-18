@@ -1,28 +1,46 @@
 import type { Request, Response } from 'express';
 import { Doctor } from '../../models/Doctor';
-import { Patient } from '../../models/Patient';
+import { Clinic } from '../../models/Clinic';
 
 export const getDashboard = async (_req: Request, res: Response): Promise<void> => {
-  const [totalDoctors, totalPatients, pendingKyc, approvedDoctors, rejectedDoctors] =
-    await Promise.all([
-      Doctor.countDocuments(),
-      Patient.countDocuments(),
-      Doctor.countDocuments({ kycStatus: 'PENDING' }),
+  try {
+    const [activeDoctors, pendingKyc, activeClinics, pendingDoctorsData] = await Promise.all([
       Doctor.countDocuments({ kycStatus: 'APPROVED' }),
-      Doctor.countDocuments({ kycStatus: 'REJECTED' }),
+      Doctor.countDocuments({ kycStatus: 'PENDING' }),
+      Clinic.countDocuments({ isVerified: true }),
+      Doctor.find({ kycStatus: 'PENDING' })
+        .sort({ createdAt: -1 })
+        .limit(6)
+        .select('name specializations createdAt'),
     ]);
 
-  res.status(200).json({
-    success: true,
-    data: {
-      totalDoctors,
-      totalPatients,
+    const kycQueue = pendingDoctorsData.map((doc) => ({
+      id: doc._id.toString(),
+      name: doc.name,
+      specialization: doc.specializations?.[0] || 'General',
+      submittedAt: ((doc as { createdAt?: Date }).createdAt ?? new Date()).toISOString(),
+    }));
+
+    // Mock revenue data for now
+    const stats = {
+      activeDoctors,
       pendingKyc,
-      approvedDoctors,
-      rejectedDoctors,
-      liveOpds: 0,
-      revenue: 0,
-    },
-  });
+      activeClinics,
+      mtdRevenue: 840000,
+      kycQueue,
+      revenueByStream: {
+        subscriptions: 510000,
+        doctorAppointments: 220000,
+        clinicServices: 110000,
+      },
+    };
+
+    res.status(200).json({
+      success: true,
+      data: { stats },
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server error' });
+  }
 };
 

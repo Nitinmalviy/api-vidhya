@@ -21,6 +21,16 @@ router.use('/profile', profileRouter);
 router.use('/verify-doctor', verifyDoctorRouter);
 router.use('/doctors', doctorsRouter);
 
+import kycRouter from './kyc.routes';
+import clinicsRouter from './clinics.routes';
+import revenueRouter from './revenue.routes';
+import ticketsRouter from './tickets.routes';
+
+router.use('/kyc', kycRouter);
+router.use('/clinics', clinicsRouter);
+router.use('/revenue', revenueRouter);
+router.use('/tickets', ticketsRouter);
+
 router.get('/patients', authenticate, authorize('admin'), getPatients);
 router.get('/stats/growth', authenticate, authorize('admin'), getGrowthStats);
 router.get('/stats/kyc', authenticate, authorize('admin'), getKycStats);

@@ -23,8 +23,11 @@ router.get('/api/v1/health', (_req, res) => {
   res.status(200).json({ success: true, status: 'ok' });
 });
 
+import paymentRouter from './payment.routes';
+
 router.use('/api/v1/admin', adminRouter);
 router.use('/api/v1/doctor', doctorRouter);
 router.use('/api/v1/patient', patientRouter);
+router.use('/api/v1/payments', paymentRouter);
 
 export default router;
