@@ -61,7 +61,7 @@ export const getProfile = async (req: AuthRequest, res: Response): Promise<void>
 export const updateProfile = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
 
-  const { name, phone, specializations, clinicName } = req.body ?? {};
+  const { name, phone, specializations, clinicName, photoFile } = req.body ?? {};
 
   const doctor = await Doctor.findById(req.user.id).exec();
   if (!doctor) throw new NotFoundError('Doctor not found');
@@ -78,6 +78,15 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
     doctor.specializations = Array.isArray(specializations)
       ? specializations.map((s: unknown) => String(s).trim()).filter(Boolean)
       : [];
+  }
+
+  // ── Profile Photo ──
+  if (photoFile) {
+    const newKey = await uploadBase64ToS3(photoFile, 'profile');
+    if (newKey) {
+      if (doctor.photoUrl) await deleteFromS3(doctor.photoUrl);
+      doctor.photoUrl = newKey;
+    }
   }
 
   await doctor.save();
@@ -128,6 +137,7 @@ export const updateKyc = async (req: AuthRequest, res: Response): Promise<void> 
     licenseNumber,
     expiryDate,
     licenseFile, // base64 (optional)
+    photoFile, // base64 (optional)
   } = req.body ?? {};
 
   const doctor = await Doctor.findById(req.user.id).exec();
@@ -177,6 +187,15 @@ export const updateKyc = async (req: AuthRequest, res: Response): Promise<void> 
       expiryDate: expiryDate ? new Date(expiryDate) : (existingLic?.expiryDate as Date),
       documentUrl: licenseUrl,
     };
+  }
+
+  // ── Profile Photo ──
+  if (photoFile) {
+    const newKey = await uploadBase64ToS3(photoFile, 'profile');
+    if (newKey) {
+      if (doctor.photoUrl) await deleteFromS3(doctor.photoUrl);
+      doctor.photoUrl = newKey;
+    }
   }
 
   // Re-submit for verification

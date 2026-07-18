@@ -33,7 +33,8 @@ export async function uploadBase64ToS3(
 
   try {
     // 1. Parse the data-URI
-    const match = file.match(/^data:([A-Za-z-+/.]+);base64,(.+)$/);
+    // Use [\s\S]+ instead of .+ to allow newlines in the base64 string
+    const match = file.match(/^data:([A-Za-z-+\/.]+);base64,([\s\S]+)$/);
     if (!match || match.length !== 3) {
       logger.error('Invalid base64 format for S3 upload');
       return undefined;
