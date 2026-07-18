@@ -2,7 +2,7 @@ import type { Request, Response } from 'express';
 import crypto from 'crypto';
 import { Doctor } from '../../models/Doctor';
 import { Clinic } from '../../models/Clinic';
-import { uploadBase64ToCloudinary } from '../../services/cloudinaryUpload';
+import { uploadBase64ToS3 } from '../../services/s3Upload';
 import { sendEmail, otpEmailTemplate } from '../../services/email';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt';
 import { generateOtp, hashOtp, otpExpiresAt } from '../../utils/otp';
@@ -52,9 +52,9 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   const emailVerificationExpires = otpExpiresAt();
 
   const [degreeUrl, licenseUrl, clinicPhotoUrl] = await Promise.all([
-    degreeFile ? uploadBase64ToCloudinary(degreeFile, 'doctor-kyc') : Promise.resolve(undefined),
-    licenseFile ? uploadBase64ToCloudinary(licenseFile, 'doctor-kyc') : Promise.resolve(undefined),
-    clinicPhotoFile ? uploadBase64ToCloudinary(clinicPhotoFile, 'clinic') : Promise.resolve(undefined),
+    degreeFile ? uploadBase64ToS3(degreeFile, 'doctor-kyc') : Promise.resolve(undefined),
+    licenseFile ? uploadBase64ToS3(licenseFile, 'doctor-kyc') : Promise.resolve(undefined),
+    clinicPhotoFile ? uploadBase64ToS3(clinicPhotoFile, 'clinic') : Promise.resolve(undefined),
   ]);
 
   const doctor = await Doctor.create({

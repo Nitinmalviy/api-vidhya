@@ -3,7 +3,7 @@ import { Doctor } from '../../models/Doctor';
 import { Clinic } from '../../models/Clinic';
 import type { AuthRequest } from '../../types';
 import { BadRequestError, NotFoundError, UnauthorizedError } from '../../utils/AppError';
-import { uploadBase64ToCloudinary } from '../../services/cloudinaryUpload';
+import { uploadBase64ToS3 } from '../../services/s3Upload';
 import { sendEmail, infoEmailTemplate } from '../../services/email';
 import { createNotification } from '../../services/notification';
 import { logger } from '../../utils/logger';
@@ -127,7 +127,7 @@ export const updateKyc = async (req: AuthRequest, res: Response): Promise<void> 
   if (degreeName || university || passingYear || degreeFile) {
     const existingDoc = doctor.degreeDetails;
     const degreeUrl = degreeFile
-      ? await uploadBase64ToCloudinary(degreeFile, 'doctor-kyc')
+      ? await uploadBase64ToS3(degreeFile, 'doctor-kyc')
       : existingDoc?.documentUrl;
 
     if (!degreeUrl) {
@@ -146,7 +146,7 @@ export const updateKyc = async (req: AuthRequest, res: Response): Promise<void> 
   if (licenseNumber || expiryDate || licenseFile) {
     const existingLic = doctor.licenseDetails;
     const licenseUrl = licenseFile
-      ? await uploadBase64ToCloudinary(licenseFile, 'doctor-kyc')
+      ? await uploadBase64ToS3(licenseFile, 'doctor-kyc')
       : existingLic?.documentUrl;
 
     if (!licenseUrl) {

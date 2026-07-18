@@ -64,6 +64,49 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
 };
 
 /**
+ * GET /api/v1/payments/history
+ * The signed-in patient's transactions, newest first — powers the
+ * subscription/billing history and invoices in the apps.
+ */
+export const getPaymentHistory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const patientId = (req as any).user?.id;
+    if (!patientId) {
+      res.status(401).json({ success: false, message: 'Unauthorized' });
+      return;
+    }
+
+    const transactions = await Transaction.find({ patientId })
+      .sort({ createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      data: {
+        transactions: transactions.map((t) => ({
+          id: String(t._id),
+          // Stable human-readable invoice number derived from the record
+          invoiceNo: `VC-${String(t._id).slice(-8).toUpperCase()}`,
+          amount: t.amount,
+          currency: t.currency,
+          type: t.type,
+          status: t.status,
+          planId: t.metadata?.planId ?? null,
+          planName: t.metadata?.planName ?? null,
+          razorpayOrderId: t.razorpayOrderId,
+          razorpayPaymentId: t.razorpayPaymentId ?? null,
+          createdAt: (t as { createdAt?: Date }).createdAt ?? null,
+        })),
+      },
+    });
+  } catch (error) {
+    req.log.error(error, 'Error fetching payment history');
+    res.status(500).json({ success: false, message: 'Failed to load payment history' });
+  }
+};
+
+/**
  * POST /api/v1/payments/verify
  * Verifies the Razorpay signature and updates transaction status
  */
