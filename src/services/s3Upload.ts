@@ -2,7 +2,7 @@ import { PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { s3Client, isS3Configured, S3_BUCKET } from '../config/s3';
 import { logger } from '../utils/logger';
 
-export type S3Folder = 'doctor-kyc' | 'clinic' | 'profile' | 'health-records';
+export type S3Folder = 'doctor-kyc' | 'clinic' | 'profile' | 'health-records' | 'prescriptions';
 
 /** Allowed MIME types per category */
 const ALLOWED_MIME: Record<string, string[]> = {
