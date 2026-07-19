@@ -29,8 +29,11 @@ async function signClinic(doc: any): Promise<void> {
   }
 }
 
+const DOCTOR_CARD_FIELDS =
+  'name specializations workType clinicId consultationFee photoUrl yearsExperience clinicAddress createdAt';
+
 export const getDoctors = async (req: AuthRequest, res: Response): Promise<void> => {
-  const { search, specialization, page = '1', limit = '20' } = req.query;
+  const { search, specialization, page = '1', limit = '20', lat, lng } = req.query;
 
   const filter: Record<string, unknown> = { kycStatus: 'APPROVED' };
   if (specialization) filter.specializations = { $in: [String(specialization)] };
@@ -45,16 +48,64 @@ export const getDoctors = async (req: AuthRequest, res: Response): Promise<void>
   const pageNum = Math.max(1, Number(page));
   const limitNum = Math.min(50, Math.max(1, Number(limit)));
 
-  const [doctors, total] = await Promise.all([
-    Doctor.find(filter)
-      .populate('clinicId', 'name photoUrl isVerified')
-      .select('name specializations workType clinicId consultationFee photoUrl yearsExperience createdAt')
+  const latN = lat != null ? Number(lat) : NaN;
+  const lngN = lng != null ? Number(lng) : NaN;
+  const hasGeo = !Number.isNaN(latN) && !Number.isNaN(lngN) && latN >= -90 && latN <= 90 && lngN >= -180 && lngN <= 180;
+
+  let doctors: any[];
+  let total: number;
+  let distanceById: Map<string, number | null> = new Map();
+
+  if (hasGeo) {
+    // Located doctors ranked by distance, then non-located appended (fallback).
+    const located = await Doctor.aggregate<{ _id: Types.ObjectId; distanceM: number }>([
+      {
+        $geoNear: {
+          near: { type: 'Point', coordinates: [lngN, latN] },
+          distanceField: 'distanceM',
+          spherical: true,
+          query: filter,
+        },
+      },
+      { $limit: 300 },
+      { $project: { _id: 1, distanceM: 1 } },
+    ]);
+    const locatedIds = located.map((d) => d._id);
+    const nonLocated = await Doctor.find({ ...filter, _id: { $nin: locatedIds } })
+      .select('_id')
       .sort({ createdAt: -1 })
-      .skip((pageNum - 1) * limitNum)
-      .limit(limitNum)
-      .lean(),
-    Doctor.countDocuments(filter),
-  ]);
+      .limit(300)
+      .lean();
+
+    const ordered: { _id: Types.ObjectId; distanceKm: number | null }[] = [
+      ...located.map((d) => ({ _id: d._id, distanceKm: Math.round((d.distanceM / 1000) * 10) / 10 })),
+      ...nonLocated.map((d) => ({ _id: d._id as Types.ObjectId, distanceKm: null })),
+    ];
+    total = ordered.length;
+
+    const pageSlice = ordered.slice((pageNum - 1) * limitNum, pageNum * limitNum);
+    distanceById = new Map(pageSlice.map((d) => [String(d._id), d.distanceKm]));
+    const pageIds = pageSlice.map((d) => d._id);
+
+    const found = await Doctor.find({ _id: { $in: pageIds } })
+      .populate('clinicId', 'name photoUrl isVerified')
+      .select(DOCTOR_CARD_FIELDS)
+      .lean();
+    // Preserve the distance ordering computed above.
+    const orderIndex = new Map(pageSlice.map((d, i) => [String(d._id), i]));
+    doctors = found.sort((a, b) => (orderIndex.get(String(a._id)) ?? 0) - (orderIndex.get(String(b._id)) ?? 0));
+  } else {
+    [doctors, total] = await Promise.all([
+      Doctor.find(filter)
+        .populate('clinicId', 'name photoUrl isVerified')
+        .select(DOCTOR_CARD_FIELDS)
+        .sort({ createdAt: -1 })
+        .skip((pageNum - 1) * limitNum)
+        .limit(limitNum)
+        .lean(),
+      Doctor.countDocuments(filter),
+    ]);
+  }
 
   await signFieldsArray(doctors, ['photoUrl']);
   await Promise.all(doctors.map(signClinic));
@@ -63,6 +114,7 @@ export const getDoctors = async (req: AuthRequest, res: Response): Promise<void>
   const withRatings = doctors.map((d) => ({
     ...d,
     rating: ratings.get(String(d._id)) ?? { average: 0, count: 0 },
+    distanceKm: hasGeo ? distanceById.get(String(d._id)) ?? null : null,
   }));
 
   res.status(200).json({

@@ -3,6 +3,20 @@ import mongoose, { type HydratedDocument, Schema } from 'mongoose';
 
 export type PatientPlan = 'FREE' | 'PREMIUM';
 export type PatientGender = 'MALE' | 'FEMALE' | 'OTHER';
+export type AddressLabel = 'HOME' | 'WORK' | 'OTHER';
+
+export interface IAddress {
+  label: AddressLabel;
+  line1: string;
+  line2?: string;
+  city: string;
+  state: string;
+  country: string;
+  zip: string;
+  lat?: number;
+  lng?: number;
+  isDefault: boolean;
+}
 
 export interface IPatient {
   name: string;
@@ -12,6 +26,7 @@ export interface IPatient {
   plan: PatientPlan;
   planId?: string;
   planExpiresAt?: Date;
+  addresses: IAddress[];
   bloodGroup?: string;
   gender?: PatientGender;
   dateOfBirth?: Date;
@@ -32,6 +47,22 @@ export interface IPatient {
 
 type PatientDocument = HydratedDocument<IPatient>;
 
+const addressSchema = new Schema<IAddress>(
+  {
+    label: { type: String, enum: ['HOME', 'WORK', 'OTHER'], default: 'HOME' },
+    line1: { type: String, required: true, trim: true, maxlength: 200 },
+    line2: { type: String, trim: true, maxlength: 200 },
+    city: { type: String, required: true, trim: true, maxlength: 100 },
+    state: { type: String, required: true, trim: true, maxlength: 100 },
+    country: { type: String, required: true, trim: true, maxlength: 100 },
+    zip: { type: String, required: true, trim: true, maxlength: 20 },
+    lat: { type: Number, min: -90, max: 90 },
+    lng: { type: Number, min: -180, max: 180 },
+    isDefault: { type: Boolean, default: false },
+  },
+  { _id: true }
+);
+
 const patientSchema = new Schema<IPatient>(
   {
     name: { type: String, required: true, trim: true },
@@ -41,6 +72,7 @@ const patientSchema = new Schema<IPatient>(
     plan: { type: String, enum: ['FREE', 'PREMIUM'], default: 'FREE' },
     planId: { type: String, trim: true },
     planExpiresAt: { type: Date },
+    addresses: { type: [addressSchema], default: [] },
     bloodGroup: { type: String, trim: true },
     gender: { type: String, enum: ['MALE', 'FEMALE', 'OTHER'] },
     dateOfBirth: { type: Date },

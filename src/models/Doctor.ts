@@ -45,6 +45,16 @@ export interface IDoctor {
   workType: DoctorWorkType;
   clinicId?: Types.ObjectId;
 
+  // Clinic location (for nearby-doctor search)
+  clinicAddress?: {
+    line1?: string;
+    city?: string;
+    state?: string;
+    country?: string;
+    zip?: string;
+  };
+  location?: { type: 'Point'; coordinates: [number, number] }; // [lng, lat]
+
   // Verification status
   kycStatus: DoctorKycStatus;
   adminRemarks?: string;
@@ -69,6 +79,26 @@ const licenseDetailsSchema = new Schema<ILicenseDetails>(
     licenseNumber: { type: String, required: true, trim: true },
     expiryDate: { type: Date, required: true },
     documentUrl: { type: String, required: true, trim: true },
+  },
+  { _id: false }
+);
+
+const clinicAddressSchema = new Schema(
+  {
+    line1: { type: String, trim: true },
+    city: { type: String, trim: true },
+    state: { type: String, trim: true },
+    country: { type: String, trim: true },
+    zip: { type: String, trim: true },
+  },
+  { _id: false }
+);
+
+// GeoJSON Point — only set when the doctor pins a clinic location.
+const pointSchema = new Schema(
+  {
+    type: { type: String, enum: ['Point'], default: 'Point' },
+    coordinates: { type: [Number], required: true }, // [lng, lat]
   },
   { _id: false }
 );
@@ -141,6 +171,8 @@ const doctorSchema = new Schema<IDoctor>(
       ref: 'Clinic',
       required: false,
     },
+    clinicAddress: { type: clinicAddressSchema, required: false },
+    location: { type: pointSchema, required: false },
     kycStatus: {
       type: String,
       enum: ['PENDING', 'APPROVED', 'REJECTED'],
@@ -182,6 +214,9 @@ const doctorSchema = new Schema<IDoctor>(
   },
   { timestamps: true }
 );
+
+// Geospatial index for nearby-doctor ($geoNear) queries.
+doctorSchema.index({ location: '2dsphere' });
 
 doctorSchema.pre<DoctorDocument>('save', async function (next) {
   try {

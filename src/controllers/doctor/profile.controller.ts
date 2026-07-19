@@ -39,6 +39,8 @@ export const getProfile = async (req: AuthRequest, res: Response): Promise<void>
     specializations: doctor.specializations ?? [],
     workType: doctor.workType,
     clinic: doctor.clinicId ?? null,
+    clinicAddress: doctor.clinicAddress ?? null,
+    location: doctor.location ?? null,
     // KYC details
     kycStatus: doctor.kycStatus,
     adminRemarks: doctor.adminRemarks ?? null,
@@ -251,6 +253,45 @@ export const updateKyc = async (req: AuthRequest, res: Response): Promise<void> 
     success: true,
     message: 'KYC details updated. Your profile has been re-submitted for verification.',
     data: kycData,
+  });
+};
+
+/* ─────────────────────────────────────────────
+   PATCH /api/v1/doctor/profile/clinic-address
+   Set the clinic's structured address + geo point
+   (used for nearby-doctor search).
+───────────────────────────────────────────── */
+export const updateClinicAddress = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+
+  const { line1, city, state, country, zip, lat, lng } = req.body ?? {};
+
+  const latN = lat != null ? Number(lat) : undefined;
+  const lngN = lng != null ? Number(lng) : undefined;
+  if (latN !== undefined && (Number.isNaN(latN) || latN < -90 || latN > 90)) throw new BadRequestError('Invalid latitude');
+  if (lngN !== undefined && (Number.isNaN(lngN) || lngN < -180 || lngN > 180)) throw new BadRequestError('Invalid longitude');
+
+  const doctor = await Doctor.findById(req.user.id).exec();
+  if (!doctor) throw new NotFoundError('Doctor not found');
+
+  doctor.clinicAddress = {
+    line1: line1 ? String(line1).trim() : undefined,
+    city: city ? String(city).trim() : undefined,
+    state: state ? String(state).trim() : undefined,
+    country: country ? String(country).trim() : undefined,
+    zip: zip ? String(zip).trim() : undefined,
+  };
+
+  if (latN !== undefined && lngN !== undefined) {
+    doctor.location = { type: 'Point', coordinates: [lngN, latN] };
+  }
+
+  await doctor.save();
+
+  res.status(200).json({
+    success: true,
+    message: 'Clinic address updated',
+    data: { clinicAddress: doctor.clinicAddress, location: doctor.location ?? null },
   });
 };
 

@@ -149,6 +149,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
         plan: patient.plan,
         planId: patient.planId ?? null,
         planExpiresAt: patient.planExpiresAt ?? null,
+        hasAddress: (patient.addresses ?? []).length > 0,
       },
       tokens: { accessToken, refreshToken },
     },
