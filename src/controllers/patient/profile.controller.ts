@@ -19,6 +19,8 @@ function serializeProfile(p: IPatient & { _id: unknown; createdAt?: Date }) {
     email: p.email,
     phone: p.phone,
     plan: p.plan,
+    planId: p.planId ?? null,
+    planExpiresAt: p.planExpiresAt ?? null,
     bloodGroup: p.bloodGroup ?? null,
     gender: p.gender ?? null,
     dateOfBirth: p.dateOfBirth ?? null,

@@ -10,6 +10,8 @@ export interface IPatient {
   password?: string;
   phone: string;
   plan: PatientPlan;
+  planId?: string;
+  planExpiresAt?: Date;
   bloodGroup?: string;
   gender?: PatientGender;
   dateOfBirth?: Date;
@@ -37,6 +39,8 @@ const patientSchema = new Schema<IPatient>(
     password: { type: String, required: true, select: false },
     phone: { type: String, required: true, trim: true },
     plan: { type: String, enum: ['FREE', 'PREMIUM'], default: 'FREE' },
+    planId: { type: String, trim: true },
+    planExpiresAt: { type: Date },
     bloodGroup: { type: String, trim: true },
     gender: { type: String, enum: ['MALE', 'FEMALE', 'OTHER'] },
     dateOfBirth: { type: Date },
