@@ -1,6 +1,5 @@
 import type { Response } from 'express';
 import { Appointment } from '../../models/Appointment';
-import { ChatMessage } from '../../models/ChatMessage';
 import { HealthRecord, type HealthRecordType } from '../../models/HealthRecord';
 import { Patient, type IPatient, type PatientGender } from '../../models/Patient';
 import type { AuthRequest } from '../../types';
@@ -164,7 +163,6 @@ export const deleteAccount = async (req: AuthRequest, res: Response): Promise<vo
   if (!ok) throw new BadRequestError('Password is incorrect');
 
   await Promise.all([
-    ChatMessage.deleteMany({ patientId: patient._id }),
     HealthRecord.deleteMany({ patientId: patient._id }),
     Appointment.deleteMany({ patientId: patient._id }),
   ]);
