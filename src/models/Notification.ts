@@ -1,6 +1,6 @@
 import mongoose, { Schema, type Types } from 'mongoose';
 
-export type NotificationType = 'KYC_SUBMITTED' | 'KYC_APPROVED' | 'KYC_REJECTED' | 'GENERAL';
+export type NotificationType = 'KYC_SUBMITTED' | 'KYC_APPROVED' | 'KYC_REJECTED' | 'GENERAL' | 'REMINDER';
 export type NotificationRole = 'doctor' | 'patient' | 'admin';
 
 export interface INotification {
@@ -18,7 +18,7 @@ const notificationSchema = new Schema<INotification>(
     role: { type: String, enum: ['doctor', 'patient', 'admin'], required: true },
     type: {
       type: String,
-      enum: ['KYC_SUBMITTED', 'KYC_APPROVED', 'KYC_REJECTED', 'GENERAL'],
+      enum: ['KYC_SUBMITTED', 'KYC_APPROVED', 'KYC_REJECTED', 'GENERAL', 'REMINDER'],
       default: 'GENERAL',
     },
     title: { type: String, required: true, trim: true },

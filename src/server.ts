@@ -8,7 +8,6 @@ connectDB()
   .then(() => runtimeSeed())
   .catch((err: Error) => logger.error({ err }, 'DB connection failed'));
 
-// Local development only — Vercel handles the HTTP server in production
 if (!process.env.VERCEL) {
   const server = app.listen(env.PORT, () => {
     logger.info({ port: env.PORT, env: env.NODE_ENV }, 'Server started');

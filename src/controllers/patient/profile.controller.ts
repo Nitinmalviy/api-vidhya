@@ -1,6 +1,8 @@
 import type { Response } from 'express';
 import { Appointment } from '../../models/Appointment';
 import { HealthRecord, type HealthRecordType } from '../../models/HealthRecord';
+import { MedicineReminder } from '../../models/MedicineReminder';
+import { MedicineDoseLog } from '../../models/MedicineDoseLog';
 import { Patient, type IPatient, type PatientGender } from '../../models/Patient';
 import type { AuthRequest } from '../../types';
 import { BadRequestError, NotFoundError, UnauthorizedError } from '../../utils/AppError';
@@ -165,6 +167,8 @@ export const deleteAccount = async (req: AuthRequest, res: Response): Promise<vo
   await Promise.all([
     HealthRecord.deleteMany({ patientId: patient._id }),
     Appointment.deleteMany({ patientId: patient._id }),
+    MedicineReminder.deleteMany({ patientId: patient._id }),
+    MedicineDoseLog.deleteMany({ patientId: patient._id }),
   ]);
   await patient.deleteOne();
 
