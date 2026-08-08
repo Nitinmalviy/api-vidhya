@@ -5,6 +5,7 @@ import profileRouter from './profile';
 import doctorsRouter from './doctors';
 import appointmentsRouter from './appointments';
 import opdRouter from './opd';
+import labsRouter from './labs';
 import medicineRemindersRouter from './medicine-reminders';
 import notificationsRouter from './notifications';
 
@@ -20,6 +21,7 @@ router.use('/profile', profileRouter);
 router.use('/doctors', doctorsRouter);
 router.use('/appointments', appointmentsRouter);
 router.use('/opd', opdRouter);
+router.use('/labs', labsRouter);
 router.use('/medicine-reminders', medicineRemindersRouter);
 router.use('/notifications', notificationsRouter);
 

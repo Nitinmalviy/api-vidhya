@@ -244,10 +244,17 @@ export const deleteRecord = async (req: AuthRequest, res: Response): Promise<voi
 
 /* ─────────────────────────────────────────────
    POST /api/v1/patient/profile/subscribe
-   Activates a premium plan. Payment is collected client-side
-   (mock checkout for now); this flips the account to PREMIUM.
+   Activates (or upgrades) a premium plan. Payment is collected
+   client-side (mock checkout for now); this flips the account to PREMIUM.
 ───────────────────────────────────────────── */
 const PLAN_IDS = ['single', 'family'] as const;
+type PlanId = (typeof PLAN_IDS)[number];
+
+/** One subscription cycle. Kept in sync with payment.controller.ts. */
+const PLAN_DURATION_DAYS = 30;
+
+/** Plan rank — a higher rank can be upgraded *to*, never down. */
+const PLAN_RANK: Record<PlanId, number> = { single: 1, family: 2 };
 
 export const subscribe = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
@@ -255,19 +262,38 @@ export const subscribe = async (req: AuthRequest, res: Response): Promise<void> 
   if (!PLAN_IDS.includes(planId)) {
     throw new BadRequestError("planId must be 'single' or 'family'");
   }
+  const nextPlan = planId as PlanId;
 
+  const current = await Patient.findById(req.user.id).select('plan planId planExpiresAt').lean();
+  if (!current) throw new NotFoundError('Patient');
+
+  // Block no-op/downgrade requests while the current plan is still live, so
+  // the UI can't accidentally charge someone to move Family → Single.
+  const stillActive =
+    current.plan === 'PREMIUM' && !!current.planExpiresAt && current.planExpiresAt > new Date();
+  if (stillActive && current.planId) {
+    const currentRank = PLAN_RANK[current.planId as PlanId] ?? 0;
+    if (PLAN_RANK[nextPlan] < currentRank) {
+      throw new BadRequestError('You cannot downgrade while your current plan is active');
+    }
+    if (PLAN_RANK[nextPlan] === currentRank) {
+      throw new BadRequestError('You are already on this plan');
+    }
+  }
+
+  const planExpiresAt = new Date(Date.now() + PLAN_DURATION_DAYS * 24 * 60 * 60 * 1000);
   const patient = await Patient.findByIdAndUpdate(
     req.user.id,
-    { plan: 'PREMIUM' },
+    { plan: 'PREMIUM', planId: nextPlan, planExpiresAt },
     { new: true }
   )
-    .select('plan')
+    .select('plan planId planExpiresAt')
     .lean();
   if (!patient) throw new NotFoundError('Patient');
 
   res.status(200).json({
     success: true,
-    message: 'Subscription active',
-    data: { plan: patient.plan, planId },
+    message: stillActive ? 'Subscription upgraded' : 'Subscription active',
+    data: { plan: patient.plan, planId: patient.planId, planExpiresAt: patient.planExpiresAt },
   });
 };

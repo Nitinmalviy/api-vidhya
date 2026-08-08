@@ -12,6 +12,8 @@
     "seed:doctors": "tsx src/scripts/seed-doctors.ts",
     "seed:patients": "tsx src/scripts/seed-patients.ts",
     "seed:reminders": "tsx src/scripts/seed-patient-reminders.ts",
+    "seed:subscription": "tsx src/scripts/seed-subscription.ts",
+    "seed:labs": "tsx src/scripts/seed-labs.ts",
     "test:email": "tsx src/scripts/test-email.ts"
   },
   "dependencies": {

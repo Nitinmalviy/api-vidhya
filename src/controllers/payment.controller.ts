@@ -145,9 +145,11 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
 };
 
 /**
- * GET /api/v1/payments/history
- * The signed-in patient's transactions, newest first — powers the
- * subscription/billing history and invoices in the apps.
+ * GET /api/v1/payments/history?type=SUBSCRIPTION|APPOINTMENT
+ * The signed-in patient's transactions, newest first. The optional `type`
+ * filter keeps the two invoice surfaces separate: Billing & Invoices shows
+ * only APPOINTMENT payments, while the Subscription page shows only
+ * SUBSCRIPTION receipts. Omitting `type` returns everything.
  */
 export const getPaymentHistory = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -157,7 +159,11 @@ export const getPaymentHistory = async (req: Request, res: Response): Promise<vo
       return;
     }
 
-    const transactions = await Transaction.find({ patientId })
+    const filter: Record<string, unknown> = { patientId };
+    const type = String(req.query.type ?? '').toUpperCase();
+    if (type === 'SUBSCRIPTION' || type === 'APPOINTMENT') filter.type = type;
+
+    const transactions = await Transaction.find(filter)
       .sort({ createdAt: -1 })
       .limit(100)
       .lean();
