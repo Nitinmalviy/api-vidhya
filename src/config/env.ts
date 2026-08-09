@@ -25,6 +25,16 @@ const schema = z.object({
   AWS_ACCESS_KEY_ID: z.string().optional(),
   AWS_SECRET_ACCESS_KEY: z.string().optional(),
   AWS_S3_BUCKET_NAME: z.string().optional(),
+  // Razorpay. `Test_Key_*` are the older names still present in .env; either works.
+  RAZORPAY_KEY_ID: z.string().optional(),
+  RAZORPAY_KEY_SECRET: z.string().optional(),
+  Test_Key_ID: z.string().optional(),
+  Test_Key_Secret: z.string().optional(),
+  /** Secret configured on the Razorpay webhook — required to trust auto-debit events. */
+  RAZORPAY_WEBHOOK_SECRET: z.string().optional(),
+  /** Razorpay plan ids for UPI Autopay mandates (create once via `npm run razorpay:plans`). */
+  RAZORPAY_PLAN_SINGLE: z.string().optional(),
+  RAZORPAY_PLAN_FAMILY: z.string().optional(),
 });
 
 const parsed = schema.safeParse(process.env);

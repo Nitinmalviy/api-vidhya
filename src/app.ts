@@ -61,6 +61,9 @@ const corsMiddleware = cors({
 
 app.use(corsMiddleware);
 app.options('*', corsMiddleware);
+// Razorpay signs the exact bytes it sends, so this path must NOT be JSON-parsed.
+// Must stay above express.json() to win the match.
+app.use('/api/v1/webhooks/razorpay', express.raw({ type: '*/*', limit: '1mb' }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(requestLogger);

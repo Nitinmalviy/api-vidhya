@@ -14,6 +14,8 @@
     "seed:reminders": "tsx src/scripts/seed-patient-reminders.ts",
     "seed:subscription": "tsx src/scripts/seed-subscription.ts",
     "seed:labs": "tsx src/scripts/seed-labs.ts",
+    "purge:accounts": "tsx src/scripts/purge-deleted-accounts.ts",
+    "razorpay:plans": "tsx src/scripts/create-razorpay-plans.ts",
     "test:email": "tsx src/scripts/test-email.ts"
   },
   "dependencies": {

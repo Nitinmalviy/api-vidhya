@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   addRecord,
+  cancelAccountDeletion,
   changePassword,
   deleteAccount,
   deleteRecord,
@@ -25,6 +26,7 @@ router.use(authenticate, authorize('user'));
 router.get('/', getProfile);
 router.put('/', updateProfile);
 router.delete('/', deleteAccount);
+router.post('/cancel-deletion', cancelAccountDeletion);
 router.put('/password', changePassword);
 router.post('/subscribe', subscribe);
 

@@ -26,6 +26,8 @@ export interface IPatient {
   plan: PatientPlan;
   planId?: string;
   planExpiresAt?: Date;
+  /** Razorpay customer, reused across mandates so UPI handles stay remembered. */
+  razorpayCustomerId?: string;
   addresses: IAddress[];
   bloodGroup?: string;
   gender?: PatientGender;
@@ -36,6 +38,10 @@ export interface IPatient {
   allergies: string[];
   address?: string;
   emergencyContact?: { name: string; phone: string };
+  /** When the patient asked for deletion. Data stays intact during the grace period. */
+  deletionRequestedAt?: Date | null;
+  /** When the purge job may erase the account (request + 14 days). */
+  deletionScheduledAt?: Date | null;
   sessionVersion: number;
   isEmailVerified: boolean;
   emailVerificationTokenHash?: string;
@@ -72,6 +78,7 @@ const patientSchema = new Schema<IPatient>(
     plan: { type: String, enum: ['FREE', 'PREMIUM'], default: 'FREE' },
     planId: { type: String, trim: true },
     planExpiresAt: { type: Date },
+    razorpayCustomerId: { type: String, trim: true },
     addresses: { type: [addressSchema], default: [] },
     bloodGroup: { type: String, trim: true },
     gender: { type: String, enum: ['MALE', 'FEMALE', 'OTHER'] },
@@ -85,6 +92,8 @@ const patientSchema = new Schema<IPatient>(
       type: { name: { type: String, trim: true }, phone: { type: String, trim: true } },
       _id: false,
     },
+    deletionRequestedAt: { type: Date, default: null },
+    deletionScheduledAt: { type: Date, default: null, index: true },
     sessionVersion: { type: Number, default: 0 },
     isEmailVerified: { type: Boolean, default: false },
     emailVerificationTokenHash: { type: String, select: false },

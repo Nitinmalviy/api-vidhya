@@ -1,13 +1,17 @@
 import type { Response } from 'express';
-import { Appointment } from '../../models/Appointment';
-import { HealthRecord, type HealthRecordType } from '../../models/HealthRecord';
-import { MedicineReminder } from '../../models/MedicineReminder';
-import { MedicineDoseLog } from '../../models/MedicineDoseLog';
+import {
+  HealthRecord,
+  HEALTH_CATEGORIES,
+  NOT_DELETED,
+  type HealthCategory,
+  type HealthRecordType,
+} from '../../models/HealthRecord';
 import { Patient, type IPatient, type PatientGender } from '../../models/Patient';
 import type { AuthRequest } from '../../types';
 import { BadRequestError, NotFoundError, UnauthorizedError } from '../../utils/AppError';
-import { uploadBase64ToS3, deleteFromS3 } from '../../services/s3Upload';
+import { uploadBase64ToS3 } from '../../services/s3Upload';
 import { signFieldsArray } from '../../services/presignedUrl';
+import { resolveUploadTarget } from '../../services/locker';
 
 const GENDERS: PatientGender[] = ['MALE', 'FEMALE', 'OTHER'];
 const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
@@ -34,8 +38,12 @@ function serializeProfile(p: IPatient & { _id: unknown; createdAt?: Date }) {
     address: p.address ?? null,
     emergencyContact: p.emergencyContact ?? null,
     memberSince: p.createdAt ?? null,
+    deletionScheduledAt: p.deletionScheduledAt ?? null,
   };
 }
+
+/** Grace period between "delete my account" and the data actually being erased. */
+const DELETION_GRACE_DAYS = 14;
 
 /** Normalize a tag list: strings, trimmed, deduped, capped. */
 function cleanTags(value: unknown, max = 20): string[] | undefined {
@@ -152,7 +160,10 @@ export const changePassword = async (req: AuthRequest, res: Response): Promise<v
   res.status(200).json({ success: true, message: 'Password changed successfully' });
 };
 
-/* DELETE /api/v1/patient/profile  { password } — permanently delete account + data */
+/* DELETE /api/v1/patient/profile  { password }
+   Schedules deletion 14 days out instead of erasing immediately, so an
+   accidental or regretted deletion can be undone. The purge job
+   (`npm run purge:accounts`) does the real erase once the date passes. */
 export const deleteAccount = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
   const { password } = req.body ?? {};
@@ -164,21 +175,53 @@ export const deleteAccount = async (req: AuthRequest, res: Response): Promise<vo
   const ok = await patient.comparePassword(String(password));
   if (!ok) throw new BadRequestError('Password is incorrect');
 
-  await Promise.all([
-    HealthRecord.deleteMany({ patientId: patient._id }),
-    Appointment.deleteMany({ patientId: patient._id }),
-    MedicineReminder.deleteMany({ patientId: patient._id }),
-    MedicineDoseLog.deleteMany({ patientId: patient._id }),
-  ]);
-  await patient.deleteOne();
+  // Re-requesting doesn't extend an existing countdown.
+  if (patient.deletionScheduledAt && patient.deletionScheduledAt > new Date()) {
+    res.status(200).json({
+      success: true,
+      message: `Your account is already scheduled for deletion on ${formatDate(patient.deletionScheduledAt)}.`,
+      data: { deletionScheduledAt: patient.deletionScheduledAt },
+    });
+    return;
+  }
 
-  res.status(200).json({ success: true, message: 'Your account and data have been deleted' });
+  const now = new Date();
+  patient.deletionRequestedAt = now;
+  patient.deletionScheduledAt = new Date(now.getTime() + DELETION_GRACE_DAYS * 24 * 60 * 60 * 1000);
+  await patient.save();
+
+  res.status(200).json({
+    success: true,
+    message: `Your account will be deleted after ${DELETION_GRACE_DAYS} days, on ${formatDate(
+      patient.deletionScheduledAt
+    )}. Sign in again before that date and cancel if you change your mind.`,
+    data: { deletionScheduledAt: patient.deletionScheduledAt },
+  });
 };
+
+/* POST /api/v1/patient/profile/cancel-deletion — stop a pending deletion */
+export const cancelAccountDeletion = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+
+  const patient = await Patient.findById(req.user.id).select('deletionScheduledAt');
+  if (!patient) throw new NotFoundError('Patient');
+  if (!patient.deletionScheduledAt) throw new BadRequestError('Your account is not scheduled for deletion');
+
+  patient.deletionRequestedAt = null;
+  patient.deletionScheduledAt = null;
+  await patient.save();
+
+  res.status(200).json({ success: true, message: 'Account deletion cancelled — welcome back.' });
+};
+
+function formatDate(date: Date): string {
+  return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'long', year: 'numeric' });
+}
 
 /* GET /api/v1/patient/profile/records */
 export const listRecords = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
-  const records = await HealthRecord.find({ patientId: req.user.id })
+  const records = await HealthRecord.find({ patientId: req.user.id, ...NOT_DELETED })
     .sort({ date: -1 })
     .limit(200)
     .lean();
@@ -189,20 +232,27 @@ export const listRecords = async (req: AuthRequest, res: Response): Promise<void
   res.status(200).json({ success: true, data: { records } });
 };
 
-/* POST /api/v1/patient/profile/records  { title, type, date?, notes?, file? } */
+/* POST /api/v1/patient/profile/records  { title, type, healthCategory?, date?, notes?, file? }
+   Legacy entry point — files under the account holder's locker profile and is
+   subject to the same plan gating and per-person quota as /patient/locker. */
 export const addRecord = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
-  const { title, type, date, notes, file, fileUrl: legacyFileUrl } = req.body ?? {};
+  const { title, type, healthCategory, date, notes, file, fileUrl: legacyFileUrl } = req.body ?? {};
 
   const cleanTitle = String(title ?? '').trim();
   if (!cleanTitle) throw new BadRequestError('Record title is required');
   if (type && !RECORD_TYPES.includes(type)) throw new BadRequestError('Invalid record type');
+  if (healthCategory && !HEALTH_CATEGORIES.includes(healthCategory as HealthCategory)) {
+    throw new BadRequestError('Invalid health category');
+  }
 
   let recordDate: Date | undefined;
   if (date) {
     recordDate = new Date(date);
     if (Number.isNaN(recordDate.getTime())) throw new BadRequestError('Invalid record date');
   }
+
+  const { member } = await resolveUploadTarget(req.user.id);
 
   // Upload file to S3 if provided as base64
   let s3Key: string | undefined;
@@ -213,8 +263,10 @@ export const addRecord = async (req: AuthRequest, res: Response): Promise<void> 
 
   const record = await HealthRecord.create({
     patientId: req.user.id,
+    memberId: member._id,
     title: cleanTitle.slice(0, 120),
     type: type ?? 'OTHER',
+    healthCategory: healthCategory ?? 'GENERAL',
     ...(recordDate ? { date: recordDate } : {}),
     ...(notes ? { notes: String(notes).trim().slice(0, 1000) } : {}),
     ...(s3Key ? { fileUrl: s3Key } : legacyFileUrl ? { fileUrl: String(legacyFileUrl).trim().slice(0, 500) } : {}),
@@ -227,17 +279,15 @@ export const addRecord = async (req: AuthRequest, res: Response): Promise<void> 
   res.status(201).json({ success: true, message: 'Record added', data: { record: recordObj } });
 };
 
-/* DELETE /api/v1/patient/profile/records/:id */
+/* DELETE /api/v1/patient/profile/records/:id — soft delete, same as the locker
+   endpoint: the file stays in S3, the report just leaves the patient's view. */
 export const deleteRecord = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
-  const deleted = await HealthRecord.findOneAndDelete({
-    _id: req.params.id,
-    patientId: req.user.id,
-  });
+  const deleted = await HealthRecord.findOneAndUpdate(
+    { _id: req.params.id, patientId: req.user.id, ...NOT_DELETED },
+    { $set: { deletedAt: new Date() } }
+  );
   if (!deleted) throw new NotFoundError('Record');
-
-  // Clean up S3 file if it exists
-  if (deleted.fileUrl) await deleteFromS3(deleted.fileUrl);
 
   res.status(200).json({ success: true, message: 'Record deleted' });
 };

@@ -24,7 +24,9 @@ router.get('/api/v1/health', (_req, res) => {
 });
 
 import paymentRouter from './payment.routes';
+import webhooksRouter from './webhooks.routes';
 
+router.use('/api/v1/webhooks', webhooksRouter);
 router.use('/api/v1/admin', adminRouter);
 router.use('/api/v1/doctor', doctorRouter);
 router.use('/api/v1/patient', patientRouter);
