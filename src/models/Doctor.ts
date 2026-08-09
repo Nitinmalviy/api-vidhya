@@ -4,6 +4,38 @@ import mongoose, { type HydratedDocument, Schema, type Types } from 'mongoose';
 export type DoctorWorkType = 'OWN_CLINIC' | 'EMPLOYEE';
 export type DoctorKycStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
 
+/**
+ * Live-OPD is not open to every doctor. A doctor asks admin for access, saying
+ * how many hours a day they can be online; admin approves an hour budget (or
+ * suspends it later). Only APPROVED doctors can run OPD sessions.
+ */
+export type OpdAccessStatus = 'NOT_REQUESTED' | 'PENDING' | 'APPROVED' | 'REJECTED' | 'SUSPENDED';
+
+export const OPD_ACCESS_STATUSES: OpdAccessStatus[] = [
+  'NOT_REQUESTED',
+  'PENDING',
+  'APPROVED',
+  'REJECTED',
+  'SUSPENDED',
+];
+
+export interface IOpdAccess {
+  status: OpdAccessStatus;
+  /** Hours per day the doctor says they can be available. */
+  requestedHoursPerDay?: number;
+  /** Hours per day admin actually allows. Session length is checked against this. */
+  approvedHoursPerDay?: number;
+  /** Free-text window the doctor prefers, e.g. "7pm–11pm, and weekends". */
+  preferredWindow?: string;
+  /** Doctor's note with the request. */
+  requestNote?: string;
+  requestedAt?: Date | null;
+  reviewedAt?: Date | null;
+  reviewedBy?: Types.ObjectId;
+  /** Admin's reason on reject/suspend — shown to the doctor. */
+  adminNote?: string;
+}
+
 export interface IDegreeDetails {
   degreeName: string;
   university: string;
@@ -59,6 +91,9 @@ export interface IDoctor {
   kycStatus: DoctorKycStatus;
   adminRemarks?: string;
 
+  // Live-OPD access, granted by admin
+  opdAccess: IOpdAccess;
+
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
 
@@ -99,6 +134,21 @@ const pointSchema = new Schema(
   {
     type: { type: String, enum: ['Point'], default: 'Point' },
     coordinates: { type: [Number], required: true }, // [lng, lat]
+  },
+  { _id: false }
+);
+
+const opdAccessSchema = new Schema<IOpdAccess>(
+  {
+    status: { type: String, enum: OPD_ACCESS_STATUSES, default: 'NOT_REQUESTED' },
+    requestedHoursPerDay: { type: Number, min: 1, max: 24 },
+    approvedHoursPerDay: { type: Number, min: 1, max: 24 },
+    preferredWindow: { type: String, trim: true, maxlength: 200 },
+    requestNote: { type: String, trim: true, maxlength: 1000 },
+    requestedAt: { type: Date, default: null },
+    reviewedAt: { type: Date, default: null },
+    reviewedBy: { type: Schema.Types.ObjectId, ref: 'Admin' },
+    adminNote: { type: String, trim: true, maxlength: 1000 },
   },
   { _id: false }
 );
@@ -182,6 +232,10 @@ const doctorSchema = new Schema<IDoctor>(
       type: String,
       required: false,
       trim: true,
+    },
+    opdAccess: {
+      type: opdAccessSchema,
+      default: () => ({ status: 'NOT_REQUESTED' }),
     },
     sessionVersion: {
       type: Number,

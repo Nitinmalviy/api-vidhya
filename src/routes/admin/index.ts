@@ -25,7 +25,9 @@ import kycRouter from './kyc.routes';
 import clinicsRouter from './clinics.routes';
 import revenueRouter from './revenue.routes';
 import ticketsRouter from './tickets.routes';
+import opdRouter from './opd.routes';
 
+router.use('/opd', opdRouter);
 router.use('/kyc', kycRouter);
 router.use('/clinics', clinicsRouter);
 router.use('/revenue', revenueRouter);

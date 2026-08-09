@@ -14,6 +14,7 @@
     "seed:reminders": "tsx src/scripts/seed-patient-reminders.ts",
     "seed:subscription": "tsx src/scripts/seed-subscription.ts",
     "seed:labs": "tsx src/scripts/seed-labs.ts",
+    "seed:opd": "tsx src/scripts/seed-opd-doctor.ts",
     "purge:accounts": "tsx src/scripts/purge-deleted-accounts.ts",
     "razorpay:plans": "tsx src/scripts/create-razorpay-plans.ts",
     "test:email": "tsx src/scripts/test-email.ts"
@@ -29,6 +30,7 @@
     "express-async-errors": "^3.1.1",
     "helmet": "^7.1.0",
     "jsonwebtoken": "^9.0.2",
+    "livekit-server-sdk": "^2.17.0",
     "mongoose": "^8.4.0",
     "nodemailer": "^8.0.5",
     "pdfkit": "^0.19.1",

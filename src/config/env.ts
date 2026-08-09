@@ -35,6 +35,10 @@ const schema = z.object({
   /** Razorpay plan ids for UPI Autopay mandates (create once via `npm run razorpay:plans`). */
   RAZORPAY_PLAN_SINGLE: z.string().optional(),
   RAZORPAY_PLAN_FAMILY: z.string().optional(),
+  // LiveKit — powers the 1:1 Live-OPD video calls.
+  LIVEKIT_URL: z.string().optional(),
+  LIVEKIT_API_KEY: z.string().optional(),
+  LIVEKIT_API_SECRET: z.string().optional(),
 });
 
 const parsed = schema.safeParse(process.env);
