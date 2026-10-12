@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { env } from './env';
 
@@ -37,3 +38,20 @@ export const PLAN_NAMES: Record<'single' | 'family', string> = { single: 'Single
  * finite count; ~10 years of monthly debits, after which the user re-authorises.
  */
 export const AUTOPAY_TOTAL_CYCLES = 120;
+
+/** Constant-time HMAC comparison so signature checks don't leak timing. */
+export function safeEqualHex(a: string, b: string): boolean {
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
+
+/** Verifies the signature Checkout returns for a one-off order payment. */
+export function verifyOrderSignature(orderId: string, paymentId: string, signature: string): boolean {
+  if (!orderId || !paymentId || !signature) return false;
+  const expected = crypto
+    .createHmac('sha256', RAZORPAY_KEY_SECRET || 'rzp_test_mock_secret')
+    .update(`${orderId}|${paymentId}`)
+    .digest('hex');
+  return safeEqualHex(expected, String(signature));
+}

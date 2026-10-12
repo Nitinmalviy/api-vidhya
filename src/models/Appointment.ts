@@ -2,6 +2,8 @@ import mongoose, { Schema, type Types } from 'mongoose';
 
 export type AppointmentType = 'CHECKUP' | 'CONSULTATION' | 'OPD';
 export type AppointmentStatus = 'BOOKED' | 'COMPLETED' | 'CANCELLED';
+export type AppointmentPaymentStatus = 'UNPAID' | 'PAID' | 'REFUNDED';
+export type AppointmentPaymentMethod = 'WALLET' | 'RAZORPAY';
 
 export interface IAppointment {
   patientId: Types.ObjectId;
@@ -17,6 +19,11 @@ export interface IAppointment {
   timeSlot: string; // e.g. "10:30 AM"
   notes?: string;
   status: AppointmentStatus;
+  // Payment — `amountPaid` is in paise and is what gets refunded on cancellation.
+  paymentStatus: AppointmentPaymentStatus;
+  paymentMethod?: AppointmentPaymentMethod;
+  amountPaid?: number;
+  paidAt?: Date;
 }
 
 const appointmentSchema = new Schema<IAppointment>(
@@ -31,6 +38,10 @@ const appointmentSchema = new Schema<IAppointment>(
     timeSlot: { type: String, required: true },
     notes: { type: String, trim: true },
     status: { type: String, enum: ['BOOKED', 'COMPLETED', 'CANCELLED'], default: 'BOOKED' },
+    paymentStatus: { type: String, enum: ['UNPAID', 'PAID', 'REFUNDED'], default: 'UNPAID' },
+    paymentMethod: { type: String, enum: ['WALLET', 'RAZORPAY'] },
+    amountPaid: { type: Number, min: 0 },
+    paidAt: { type: Date },
   },
   { timestamps: true }
 );

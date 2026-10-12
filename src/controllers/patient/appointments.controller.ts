@@ -8,6 +8,7 @@ import { BadRequestError, NotFoundError, UnauthorizedError } from '../../utils/A
 import { createNotification } from '../../services/notification';
 import { sendEmail, appointmentEmailTemplate, infoEmailTemplate } from '../../services/email';
 import { logger } from '../../utils/logger';
+import { refundCancelledAppointment, toRupees } from '../../services/wallet';
 
 /* POST /api/v1/patient/appointments */
 export const createAppointment = async (req: AuthRequest, res: Response): Promise<void> => {
@@ -146,24 +147,41 @@ export const cancelAppointment = async (req: AuthRequest, res: Response): Promis
     message: `Appointment for ${appointment.date} at ${appointment.timeSlot} was cancelled.`,
   });
 
-  // Notify + email the patient about the refund (non-fatal)
-  const amount = appointment.price ?? 500;
+  // Paid bookings are refunded to the VidhyaCare wallet instantly. Unpaid ones
+  // have nothing to refund — the old copy promised a refund either way.
+  let refundedPaise = 0;
+  let refundFailed = false;
+  try {
+    refundedPaise = await refundCancelledAppointment(String(appointment._id));
+  } catch (err) {
+    // Cancellation stands; the refund is idempotent and can be re-run safely.
+    refundFailed = true;
+    logger.error({ err, appointmentId: String(appointment._id) }, 'WALLET: refund failed — re-run refundCancelledAppointment');
+  }
+  const amount = toRupees(refundedPaise);
+  const refundLine = refundFailed
+    ? 'Your refund is being processed and will reach your VidhyaCare wallet shortly.'
+    : refundedPaise > 0
+      ? `₹${amount.toLocaleString('en-IN')} has been refunded to your VidhyaCare wallet.`
+      : 'No payment was taken for this booking.';
+
+  // Notify + email the patient (non-fatal)
   try {
     await createNotification({
       userId: req.user.id,
       role: 'patient',
       type: 'GENERAL',
       title: 'Booking Cancelled',
-      message: `Your booking for ${appointment.date} at ${appointment.timeSlot} was cancelled. Refund of ₹${amount} will be processed in 3 working days.`,
+      message: `Your booking for ${appointment.date} at ${appointment.timeSlot} was cancelled. ${refundLine}`,
     });
 
     const patient = await Patient.findById(req.user.id).select('name email').lean();
     if (patient?.email) {
       const t = infoEmailTemplate({
-        heading: 'Booking Cancelled — Refund Initiated',
+        heading: refundedPaise > 0 ? 'Booking Cancelled — Refunded to Wallet' : 'Booking Cancelled',
         body: `Hi ${patient.name}, your booking for <strong>${appointment.date}</strong> at <strong>${appointment.timeSlot}</strong> has been cancelled.`,
         accent: 'amber',
-        note: `Your refund of ₹${amount} will be processed to your original payment method within 3 working days.`,
+        note: refundLine,
       });
       await sendEmail({ to: patient.email, subject: 'Your VidhyaCare booking was cancelled', text: t.text, html: t.html });
     }
@@ -174,7 +192,7 @@ export const cancelAppointment = async (req: AuthRequest, res: Response): Promis
   res.status(200).json({
     success: true,
     message: 'Appointment cancelled successfully',
-    data: { refundNote: 'Your refund will be processed in 3 working days.' },
+    data: { refundNote: refundLine, refundedAmount: amount },
   });
 };
 
