@@ -144,3 +144,11 @@ export const signedInSmsLimits = [
   limiter('signed-in-sms', { by: 'user', max: 5, windowMs: HOUR, message: CODE_LATER }),
   limiter('sms-code-day', { by: { body: 'phone' }, max: 10, windowMs: 24 * HOUR, message: CODE_LATER }),
 ];
+
+/** Each sync calls the Razorpay API, so keep it to a sensible pace per user. */
+export const paymentSyncLimit = limiter('payment-sync', {
+  by: 'user',
+  max: 20,
+  windowMs: 15 * MINUTE,
+  message: 'Please wait a moment before checking again.',
+});

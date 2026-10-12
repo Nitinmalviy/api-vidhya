@@ -5,9 +5,8 @@ import { razorpay, RAZORPAY_KEY_ID, isRazorpayConfigured, verifyOrderSignature }
 import { Appointment } from '../../models/Appointment';
 import { Doctor } from '../../models/Doctor';
 import { Transaction } from '../../models/Transaction';
-import { createNotification } from '../../services/notification';
+import { fulfilPaidOrder, syncPendingPayments } from '../payment.controller';
 import {
-  creditTopup,
   getOrCreateWallet,
   inTransaction,
   notifyAppointmentPaid,
@@ -18,7 +17,6 @@ import {
 } from '../../services/wallet';
 import type { AuthRequest } from '../../types';
 import { BadRequestError, NotFoundError, ServiceUnavailableError, UnauthorizedError } from '../../utils/AppError';
-import { logger } from '../../utils/logger';
 
 /**
  * The patient wallet is closed-loop: money can be added and spent on
@@ -85,42 +83,6 @@ export const createTopupOrder = async (req: AuthRequest, res: Response): Promise
   });
 };
 
-/**
- * Credits a verified top-up exactly once. Shared by /verify and the webhook,
- * whichever arrives first; the other becomes a no-op.
- */
-export async function completeTopup(orderId: string, paymentId: string, signature?: string): Promise<boolean> {
-  const tx = await Transaction.findOne({ razorpayOrderId: orderId, type: 'WALLET_TOPUP' });
-  if (!tx) return false;
-
-  const credited = await creditTopup({
-    patientId: String(tx.patientId),
-    amount: toPaise(tx.amount),
-    transactionId: String(tx._id),
-    razorpayOrderId: orderId,
-  });
-
-  await Transaction.updateOne(
-    { _id: tx._id, status: { $ne: 'SUCCESS' } },
-    { status: 'SUCCESS', razorpayPaymentId: paymentId, ...(signature ? { razorpaySignature: signature } : {}) }
-  );
-
-  if (credited) {
-    try {
-      await createNotification({
-        userId: String(tx.patientId),
-        role: 'patient',
-        type: 'GENERAL',
-        title: 'Money added to wallet',
-        message: `₹${tx.amount.toLocaleString('en-IN')} was added to your VidhyaCare wallet.`,
-      });
-    } catch (err) {
-      logger.warn({ err }, 'Top-up notification failed');
-    }
-  }
-  return credited;
-}
-
 /* POST /api/v1/patient/wallet/topup/verify */
 export const verifyTopup = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
@@ -133,9 +95,24 @@ export const verifyTopup = async (req: AuthRequest, res: Response): Promise<void
   const owned = await Transaction.exists({ razorpayOrderId: razorpay_order_id, patientId: req.user.id, type: 'WALLET_TOPUP' });
   if (!owned) throw new NotFoundError('Top-up');
 
-  await completeTopup(razorpay_order_id, razorpay_payment_id, razorpay_signature);
+  const result = await fulfilPaidOrder(razorpay_order_id, razorpay_payment_id, razorpay_signature);
   const data = await walletSummary('patient', req.user.id, 20);
+  if (result === 'pending') {
+    res.status(202).json({ success: true, pending: true, message: 'Payment is still processing. Your balance will update in a few minutes.', data });
+    return;
+  }
+  if (result === 'failed') throw new BadRequestError('Razorpay did not confirm this payment. If money was deducted, your bank will refund it.');
   res.status(200).json({ success: true, message: 'Money added to your wallet', data });
+};
+
+/* POST /api/v1/patient/wallet/sync
+   Picks up payments that finished after the checkout window closed (or that a
+   webhook would normally have delivered) by asking Razorpay directly. */
+export const syncWalletPayments = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+  const fulfilled = isRazorpayConfigured() ? await syncPendingPayments(req.user.id) : 0;
+  const data = await walletSummary('patient', req.user.id, 20);
+  res.status(200).json({ success: true, data: { ...data, synced: fulfilled } });
 };
 
 /* POST /api/v1/patient/wallet/pay-appointment  { appointmentId } */

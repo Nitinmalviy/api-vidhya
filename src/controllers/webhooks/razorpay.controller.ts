@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import type { Request, Response } from 'express';
 import { PLAN_DURATION_DAYS, PLAN_NAMES, safeEqualHex } from '../../config/razorpay';
-import { completeTopup } from '../patient/wallet.controller';
+import { fulfilPaidOrder } from '../payment.controller';
 import { applyPayoutState } from '../../services/withdrawals';
 import { env } from '../../config/env';
 import { Patient } from '../../models/Patient';
@@ -23,7 +23,7 @@ import { logger } from '../../utils/logger';
  *   Events  subscription.authenticated, subscription.activated,
  *           subscription.charged, subscription.pending, subscription.halted,
  *           subscription.cancelled, subscription.completed,
- *           payment.captured (wallet top-ups)
+ *           payment.captured, order.paid (top-ups, appointments, lab tests, plans)
  *
  * RazorpayX → Webhooks (same URL; secret RAZORPAYX_WEBHOOK_SECRET or the one above):
  *   Events  payout.queued, payout.pending, payout.processed, payout.reversed,
@@ -91,11 +91,16 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
   // Acknowledge first-class: Razorpay retries on any non-2xx, and a duplicate
   // delivery must not double-extend a plan. Everything below is idempotent.
   try {
-    // Wallet top-up captured — credits even if the app closed before /verify.
-    if (event === 'payment.captured' && paymentEntity?.notes?.kind === 'WALLET_TOPUP' && paymentEntity.order_id) {
-      await completeTopup(String(paymentEntity.order_id), String(paymentEntity.id));
-      res.status(200).json({ success: true });
-      return;
+    // A one-off order was paid (wallet top-up, appointment, lab test, plan) — fulfils even
+    // if the app closed before /verify. Looked up by order id, not payment notes, which
+    // Razorpay doesn't always copy from the order. Subscription charges have no
+    // Transaction of ours and fall through to the subscription handling below.
+    if ((event === 'payment.captured' || event === 'order.paid') && paymentEntity?.order_id && paymentEntity?.id) {
+      const result = await fulfilPaidOrder(String(paymentEntity.order_id), String(paymentEntity.id));
+      if (result !== 'unknown') {
+        res.status(200).json({ success: true });
+        return;
+      }
     }
 
     // RazorpayX payout lifecycle for doctor withdrawals. reference_id is our withdrawal id.

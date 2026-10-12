@@ -11,7 +11,9 @@ import { Doctor } from '../models/Doctor';
 import { COMPANY } from '../config/company';
 import { LabBooking } from '../models/LabBooking';
 import { inTransaction, notifyAppointmentPaid, postOnce, settleAppointmentPayment, toPaise } from '../services/wallet';
-import { completeTopup } from './patient/wallet.controller';
+import { completeTopup } from '../services/topup';
+import { ensureCaptured, findPaidPayment } from '../services/razorpayPayments';
+import { logger } from '../utils/logger';
 import { Transaction, type ITransaction } from '../models/Transaction';
 import { Patient } from '../models/Patient';
 import { Appointment } from '../models/Appointment';
@@ -250,6 +252,173 @@ export const getPaymentHistory = async (req: Request, res: Response): Promise<vo
  * POST /api/v1/payments/verify
  * Verifies the Razorpay signature and updates transaction status
  */
+export type FulfilResult = 'done' | 'already' | 'pending' | 'failed' | 'unknown';
+
+/**
+ * Turns a paid Razorpay order into what was bought (plan, appointment, lab
+ * test, wallet money) — exactly once. Shared by /verify, the webhook and the
+ * pending-payment sync, so a closed browser or a missing webhook can't lose a
+ * payment, and none of them can fulfil twice.
+ */
+export async function fulfilPaidOrder(orderId: string, paymentId: string, signature?: string): Promise<FulfilResult> {
+  const existing = await Transaction.findOne({ razorpayOrderId: orderId }).lean();
+  if (!existing) return 'unknown';
+  if (existing.status === 'SUCCESS') return 'already';
+
+  // Never fulfil on a signature alone: confirm with Razorpay that the money is captured.
+  const capture = await ensureCaptured(orderId, paymentId, toPaise(existing.amount));
+  if (capture !== 'captured') return capture;
+
+  if (existing.type === 'WALLET_TOPUP') {
+    return (await completeTopup(orderId, paymentId, signature)) ? 'done' : 'already';
+  }
+
+  // Only the PENDING → SUCCESS transition fulfils, so replaying /verify can't
+  // re-extend a plan or re-send receipts.
+  const transaction = await Transaction.findOneAndUpdate(
+    { _id: existing._id, status: 'PENDING' },
+    {
+      status: 'SUCCESS',
+      razorpayPaymentId: paymentId,
+      ...(signature ? { razorpaySignature: signature } : {}),
+    },
+    { new: true }
+  );
+
+  if (!transaction) return 'already';
+
+  // Fulfill business logic based on type
+  if (transaction.type === 'SUBSCRIPTION') {
+    const now = new Date();
+    const planExpiresAt = new Date(now.getTime() + PLAN_DURATION_DAYS * 24 * 60 * 60 * 1000);
+    const patient = await Patient.findByIdAndUpdate(
+      transaction.patientId,
+      {
+        plan: 'PREMIUM',
+        planId: transaction.metadata?.planId ?? undefined,
+        planExpiresAt,
+      },
+      { new: true }
+    ).lean();
+
+    // Receipt email + in-app notification (non-fatal)
+    try {
+      const planName = transaction.metadata?.planName ?? 'Premium';
+      await createNotification({
+        userId: transaction.patientId.toString(),
+        role: 'patient',
+        type: 'GENERAL',
+        title: 'Subscription Active',
+        message: `Your ${planName} plan is active until ${fmtDate(planExpiresAt)}.`,
+      });
+      if (patient?.email) {
+        const tpl = subscriptionReceiptEmailTemplate({
+          patientName: patient.name,
+          planName,
+          amount: transaction.amount,
+          invoiceNo: receiptNo(String(transaction._id)),
+          startsOn: fmtDate(now),
+          expiresOn: fmtDate(planExpiresAt),
+        });
+        const pdf = await buildSubscriptionReceiptPdf(
+          transaction.toObject() as ITransaction & { _id: unknown; createdAt?: Date },
+          patient.name
+        );
+        await sendEmail({
+          to: patient.email,
+          subject: tpl.subject,
+          text: tpl.text,
+          html: tpl.html,
+          attachments: [{ filename: `receipt-${receiptNo(String(transaction._id))}.pdf`, content: pdf, contentType: 'application/pdf' }],
+        });
+      }
+    } catch (err) {
+      logger.error({ err }, 'Subscription receipt email/notification failed');
+    }
+  } else if (transaction.type === 'LAB_BOOKING') {
+    const labBookingId = transaction.metadata?.labBookingId;
+    const paid = await LabBooking.findOneAndUpdate(
+      { _id: labBookingId, patientId: transaction.patientId, status: 'BOOKED', paymentStatus: 'UNPAID' },
+      { paymentStatus: 'PAID', paymentMethod: 'RAZORPAY', amountPaid: toPaise(transaction.amount) }
+    );
+    if (!paid) {
+      // Cancelled (or paid another way) while the sheet was open: refund to wallet.
+      await postOnce(`lab-pay-orphan:${transaction.razorpayOrderId}`, [
+        {
+          ownerType: 'patient',
+          ownerId: String(transaction.patientId),
+          bucket: 'balance',
+          direction: 'CREDIT',
+          amount: toPaise(transaction.amount),
+          kind: 'LAB_REFUND',
+          description: 'Refund · payment for a lab booking that was no longer payable',
+          refType: 'Transaction',
+          refId: transaction._id,
+        },
+      ]);
+    }
+  } else if (transaction.type === 'APPOINTMENT') {
+    // Previously this set a `paymentStatus` field the schema didn't have, so
+    // Mongoose silently dropped it and payments were never recorded.
+    const appointmentId = transaction.metadata?.appointmentId;
+    if (appointmentId) {
+      try {
+        await inTransaction((session) =>
+          settleAppointmentPayment({
+            appointmentId: String(appointmentId),
+            patientId: String(transaction.patientId),
+            amount: toPaise(transaction.amount),
+            method: 'RAZORPAY',
+            session,
+          })
+        );
+        await notifyAppointmentPaid(String(appointmentId));
+      } catch (err) {
+        // Paid, but the appointment was cancelled or paid another way meanwhile.
+        // The money must not vanish: park it in the patient's wallet.
+        logger.warn({ err, appointmentId }, 'Paid appointment not payable — crediting wallet');
+        await postOnce(`appt-pay-orphan:${transaction.razorpayOrderId}`, [
+          {
+            ownerType: 'patient',
+            ownerId: String(transaction.patientId),
+            bucket: 'balance',
+            direction: 'CREDIT',
+            amount: toPaise(transaction.amount),
+            kind: 'APPOINTMENT_REFUND',
+            description: 'Refund · payment for an appointment that was no longer payable',
+            refType: 'Transaction',
+            refId: transaction._id,
+          },
+        ]);
+      }
+    }
+  }
+
+  return 'done';
+}
+
+/** Re-checks this patient's recent unpaid orders with Razorpay and fulfils any that were paid. */
+export async function syncPendingPayments(patientId: string): Promise<number> {
+  const since = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const pending = await Transaction.find({ patientId, status: 'PENDING', createdAt: { $gte: since } })
+    .sort({ createdAt: -1 })
+    .limit(5)
+    .select('razorpayOrderId')
+    .lean();
+  let fulfilled = 0;
+  for (const t of pending) {
+    try {
+      const paymentId = await findPaidPayment(t.razorpayOrderId);
+      if (paymentId && (await fulfilPaidOrder(t.razorpayOrderId, paymentId)) === 'done') fulfilled += 1;
+    } catch (err) {
+      logger.warn({ err, orderId: t.razorpayOrderId }, 'Payment sync failed for one order');
+    }
+  }
+  return fulfilled;
+}
+
+const PENDING_MESSAGE = 'Your payment is still processing. It will show up here in a few minutes.';
+
 export const verifyPayment = async (req: Request, res: Response): Promise<void> => {
   try {
     const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body ?? {};
@@ -261,143 +430,23 @@ export const verifyPayment = async (req: Request, res: Response): Promise<void> 
       return;
     }
 
-    const existing = await Transaction.findOne({ razorpayOrderId: razorpay_order_id, patientId }).lean();
-    if (!existing) {
+    // The order must belong to the caller — a valid signature alone only proves Razorpay saw a payment.
+    const owned = await Transaction.exists({ razorpayOrderId: razorpay_order_id, patientId });
+    if (!owned) {
       res.status(404).json({ success: false, message: 'Transaction not found' });
       return;
     }
 
-    if (existing.type === 'WALLET_TOPUP') {
-      await completeTopup(razorpay_order_id, razorpay_payment_id, razorpay_signature);
-      res.status(200).json({ success: true, message: 'Payment verified successfully' });
+    const result = await fulfilPaidOrder(razorpay_order_id, razorpay_payment_id, razorpay_signature);
+    if (result === 'pending') {
+      res.status(202).json({ success: true, pending: true, message: PENDING_MESSAGE });
       return;
     }
-
-    // Only the PENDING → SUCCESS transition fulfils, so replaying /verify can't
-    // re-extend a plan or re-send receipts.
-    const transaction = await Transaction.findOneAndUpdate(
-      { _id: existing._id, status: 'PENDING' },
-      {
-        status: 'SUCCESS',
-        razorpayPaymentId: razorpay_payment_id,
-        razorpaySignature: razorpay_signature,
-      },
-      { new: true }
-    );
-
-    if (!transaction) {
-      res.status(200).json({ success: true, message: 'Payment already verified' });
+    if (result === 'failed') {
+      res.status(400).json({ success: false, message: 'Razorpay did not confirm this payment. If money was deducted, it will be refunded by your bank.' });
       return;
     }
-
-    // Fulfill business logic based on type
-    if (transaction.type === 'SUBSCRIPTION') {
-      const now = new Date();
-      const planExpiresAt = new Date(now.getTime() + PLAN_DURATION_DAYS * 24 * 60 * 60 * 1000);
-      const patient = await Patient.findByIdAndUpdate(
-        transaction.patientId,
-        {
-          plan: 'PREMIUM',
-          planId: transaction.metadata?.planId ?? undefined,
-          planExpiresAt,
-        },
-        { new: true }
-      ).lean();
-
-      // Receipt email + in-app notification (non-fatal)
-      try {
-        const planName = transaction.metadata?.planName ?? 'Premium';
-        await createNotification({
-          userId: transaction.patientId.toString(),
-          role: 'patient',
-          type: 'GENERAL',
-          title: 'Subscription Active',
-          message: `Your ${planName} plan is active until ${fmtDate(planExpiresAt)}.`,
-        });
-        if (patient?.email) {
-          const tpl = subscriptionReceiptEmailTemplate({
-            patientName: patient.name,
-            planName,
-            amount: transaction.amount,
-            invoiceNo: receiptNo(String(transaction._id)),
-            startsOn: fmtDate(now),
-            expiresOn: fmtDate(planExpiresAt),
-          });
-          const pdf = await buildSubscriptionReceiptPdf(
-            transaction.toObject() as ITransaction & { _id: unknown; createdAt?: Date },
-            patient.name
-          );
-          await sendEmail({
-            to: patient.email,
-            subject: tpl.subject,
-            text: tpl.text,
-            html: tpl.html,
-            attachments: [{ filename: `receipt-${receiptNo(String(transaction._id))}.pdf`, content: pdf, contentType: 'application/pdf' }],
-          });
-        }
-      } catch (err) {
-        req.log.error(err, 'Subscription receipt email/notification failed');
-      }
-    } else if (transaction.type === 'LAB_BOOKING') {
-      const labBookingId = transaction.metadata?.labBookingId;
-      const paid = await LabBooking.findOneAndUpdate(
-        { _id: labBookingId, patientId: transaction.patientId, status: 'BOOKED', paymentStatus: 'UNPAID' },
-        { paymentStatus: 'PAID', paymentMethod: 'RAZORPAY', amountPaid: toPaise(transaction.amount) }
-      );
-      if (!paid) {
-        // Cancelled (or paid another way) while the sheet was open: refund to wallet.
-        await postOnce(`lab-pay-orphan:${transaction.razorpayOrderId}`, [
-          {
-            ownerType: 'patient',
-            ownerId: String(transaction.patientId),
-            bucket: 'balance',
-            direction: 'CREDIT',
-            amount: toPaise(transaction.amount),
-            kind: 'LAB_REFUND',
-            description: 'Refund · payment for a lab booking that was no longer payable',
-            refType: 'Transaction',
-            refId: transaction._id,
-          },
-        ]);
-      }
-    } else if (transaction.type === 'APPOINTMENT') {
-      // Previously this set a `paymentStatus` field the schema didn't have, so
-      // Mongoose silently dropped it and payments were never recorded.
-      const appointmentId = transaction.metadata?.appointmentId;
-      if (appointmentId) {
-        try {
-          await inTransaction((session) =>
-            settleAppointmentPayment({
-              appointmentId: String(appointmentId),
-              patientId: String(transaction.patientId),
-              amount: toPaise(transaction.amount),
-              method: 'RAZORPAY',
-              session,
-            })
-          );
-          await notifyAppointmentPaid(String(appointmentId));
-        } catch (err) {
-          // Paid, but the appointment was cancelled or paid another way meanwhile.
-          // The money must not vanish: park it in the patient's wallet.
-          req.log.warn({ err, appointmentId }, 'Paid appointment not payable — crediting wallet');
-          await postOnce(`appt-pay-orphan:${transaction.razorpayOrderId}`, [
-            {
-              ownerType: 'patient',
-              ownerId: String(transaction.patientId),
-              bucket: 'balance',
-              direction: 'CREDIT',
-              amount: toPaise(transaction.amount),
-              kind: 'APPOINTMENT_REFUND',
-              description: 'Refund · payment for an appointment that was no longer payable',
-              refType: 'Transaction',
-              refId: transaction._id,
-            },
-          ]);
-        }
-      }
-    }
-
-    res.status(200).json({ success: true, message: 'Payment verified successfully' });
+    res.status(200).json({ success: true, message: result === 'already' ? 'Payment already verified' : 'Payment verified successfully' });
   } catch (error) {
     req.log.error(error, 'Error verifying payment');
     res.status(500).json({ success: false, message: 'Payment verification failed' });
