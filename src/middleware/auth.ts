@@ -5,7 +5,8 @@ import { UnauthorizedError, ForbiddenError } from '../utils/AppError';
 import { Patient } from '../models/Patient';
 import { Doctor } from '../models/Doctor';
 
-const SESSION_REPLACED_MSG = 'You signed in on another device, so this session has ended.';
+const SESSION_ENDED_MSG =
+  'Your session has ended because you signed in on another device or changed your password. Please sign in again.';
 
 export const authenticate = async (
   req: AuthRequest,
@@ -17,23 +18,17 @@ export const authenticate = async (
   const payload = verifyAccessToken(header.split(' ')[1]);
 
   // Single-session enforcement: tokens carry the session version they were
-  // issued with; a newer login bumps the user's version, ending older sessions.
-  // Tokens issued before this feature (no `sv`) are allowed through until the
-  // user logs in again.
-  if (payload.sv !== undefined) {
-    if (payload.role === 'user') {
-      const patient = await Patient.findById(payload.id).select('sessionVersion').lean();
-      if (!patient) throw new UnauthorizedError('Account no longer exists');
-      if ((patient.sessionVersion ?? 0) !== payload.sv) {
-        throw new UnauthorizedError(SESSION_REPLACED_MSG);
-      }
-    } else if (payload.role === 'doctor') {
-      const doctor = await Doctor.findById(payload.id).select('sessionVersion').lean();
-      if (!doctor) throw new UnauthorizedError('Account no longer exists');
-      if ((doctor.sessionVersion ?? 0) !== payload.sv) {
-        throw new UnauthorizedError(SESSION_REPLACED_MSG);
-      }
-    }
+  // issued with; a newer login or a password change bumps the user's version,
+  // ending older sessions. Patient/doctor tokens without `sv` predate this and
+  // are refused, so a password change really does sign everyone else out.
+  if (payload.role === 'user' || payload.role === 'doctor') {
+    if (payload.sv === undefined) throw new UnauthorizedError('Your session has ended. Please sign in again.');
+    const account =
+      payload.role === 'user'
+        ? await Patient.findById(payload.id).select('sessionVersion').lean()
+        : await Doctor.findById(payload.id).select('sessionVersion').lean();
+    if (!account) throw new UnauthorizedError('Account no longer exists');
+    if ((account.sessionVersion ?? 0) !== payload.sv) throw new UnauthorizedError(SESSION_ENDED_MSG);
   }
 
   req.user = payload;

@@ -11,6 +11,9 @@ import { requestLogger } from './middleware/requestLogger';
 
 const app = express();
 dns.setServers(['8.8.8.8', '8.8.4.4','1.1.1.1', '1.0.0.1']);
+// Vercel's edge sets X-Forwarded-For to the real client IP. Trust exactly that one
+// hop so rate limits key on the visitor, not on Vercel's proxy address.
+app.set('trust proxy', 1);
 app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 

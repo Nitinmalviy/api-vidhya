@@ -8,7 +8,11 @@ import {
 } from '../../models/HealthRecord';
 import { Patient, type IPatient, type PatientGender } from '../../models/Patient';
 import type { AuthRequest } from '../../types';
-import { BadRequestError, NotFoundError, UnauthorizedError } from '../../utils/AppError';
+import { BadRequestError, ConflictError, NotFoundError, UnauthorizedError } from '../../utils/AppError';
+import { assertStrongPassword } from '../../utils/validation';
+import { signAccessToken, signRefreshToken } from '../../utils/jwt';
+import { toIndianMobile, maskMobile } from '../../utils/phone';
+import { issuePhoneOtp, consumePhoneOtp } from '../../services/phoneOtp';
 import { uploadBase64ToS3 } from '../../services/s3Upload';
 import { signFieldsArray } from '../../services/presignedUrl';
 import { resolveUploadTarget } from '../../services/locker';
@@ -23,6 +27,7 @@ function serializeProfile(p: IPatient & { _id: unknown; createdAt?: Date }) {
     name: p.name,
     email: p.email,
     phone: p.phone,
+    phoneVerified: !!p.verifiedPhone,
     plan: p.plan,
     planId: p.planId ?? null,
     planExpiresAt: p.planExpiresAt ?? null,
@@ -128,7 +133,16 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
 
   if (Object.keys(update).length === 0) throw new BadRequestError('Nothing to update');
 
-  const patient = await Patient.findByIdAndUpdate(req.user.id, update, {
+  // Typing a different number drops the verified one: phone sign-in must only
+  // ever text a number the patient has proven they own.
+  const unset: Record<string, 1> = {};
+  if (update.phone !== undefined) {
+    const current = await Patient.findById(req.user.id).select('verifiedPhone').lean();
+    const digits = String(update.phone).replace(/\D/g, '').slice(-10);
+    if (current?.verifiedPhone && current.verifiedPhone.slice(-10) !== digits) unset.verifiedPhone = 1;
+  }
+
+  const patient = await Patient.findByIdAndUpdate(req.user.id, { $set: update, ...(Object.keys(unset).length && { $unset: unset }) }, {
     new: true,
     runValidators: true,
   }).lean();
@@ -141,12 +155,16 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
   });
 };
 
-/* PUT /api/v1/patient/profile/password  { currentPassword, newPassword } */
+/* PUT /api/v1/patient/profile/password  { currentPassword, newPassword }
+   Signs out every other device and hands this one fresh tokens. */
 export const changePassword = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
   const { currentPassword, newPassword } = req.body ?? {};
   if (!currentPassword || !newPassword) throw new BadRequestError('Both current and new password are required');
-  if (String(newPassword).length < 8) throw new BadRequestError('New password must be at least 8 characters');
+  assertStrongPassword(newPassword);
+  if (String(currentPassword) === String(newPassword)) {
+    throw new BadRequestError('New password must be different from the current one');
+  }
 
   const patient = await Patient.findById(req.user.id).select('+password');
   if (!patient) throw new NotFoundError('Patient');
@@ -155,9 +173,58 @@ export const changePassword = async (req: AuthRequest, res: Response): Promise<v
   if (!ok) throw new BadRequestError('Current password is incorrect');
 
   patient.password = String(newPassword);
+  patient.sessionVersion = (patient.sessionVersion ?? 0) + 1;
   await patient.save();
 
-  res.status(200).json({ success: true, message: 'Password changed successfully' });
+  const payload = { id: String(patient._id), role: 'user' as const, sv: patient.sessionVersion };
+  res.status(200).json({
+    success: true,
+    message: 'Password changed. You have been signed out on other devices.',
+    data: { tokens: { accessToken: signAccessToken(payload), refreshToken: signRefreshToken(payload) } },
+  });
+};
+
+/* POST /api/v1/patient/profile/phone/send-otp  { phone }
+   Texts a code to the number the patient wants to verify. */
+export const sendPhoneVerifyOtp = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+  const phone = toIndianMobile(req.body?.phone);
+
+  const owner = await Patient.findOne({ verifiedPhone: phone }).select('_id').lean();
+  if (owner && String(owner._id) === req.user.id) throw new BadRequestError('This number is already verified');
+  if (owner) throw new ConflictError('This number is already linked to another VidhyaCare account');
+
+  await issuePhoneOtp(phone, 'VERIFY', req.user.id);
+  res.status(200).json({ success: true, message: `Code sent to ${maskMobile(phone)}` });
+};
+
+/* POST /api/v1/patient/profile/phone/verify  { phone, otp } */
+export const verifyPhone = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+  const phone = toIndianMobile(req.body?.phone);
+  await consumePhoneOtp(phone, 'VERIFY', req.body?.otp, req.user.id);
+
+  let patient;
+  try {
+    patient = await Patient.findByIdAndUpdate(
+      req.user.id,
+      { $set: { phone, verifiedPhone: phone } },
+      { new: true, runValidators: true }
+    ).lean();
+  } catch (err) {
+    // Someone else verified the same number between our check and now.
+    if (Number((err as { code?: unknown }).code) === 11000) {
+      throw new ConflictError('This number is already linked to another VidhyaCare account');
+    }
+    throw err;
+  }
+  if (!patient) throw new NotFoundError('Patient');
+
+  res.status(200).json({
+    success: true,
+    message: 'Mobile number verified. You can now sign in with an OTP.',
+    data: { profile: serializeProfile(patient) },
+  });
 };
 
 /* DELETE /api/v1/patient/profile  { password }

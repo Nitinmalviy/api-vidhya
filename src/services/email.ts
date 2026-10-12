@@ -1,6 +1,7 @@
 import nodemailer, { type Transporter } from 'nodemailer';
 import { env } from '../config/env';
 import { logger } from '../utils/logger';
+import { ServiceUnavailableError } from '../utils/AppError';
 
 export const isEmailConfigured = (): boolean =>
   Boolean(env.SMTP_HOST && env.SMTP_PORT && env.SMTP_USER && env.SMTP_PASS);
@@ -233,3 +234,28 @@ export function subscriptionReceiptEmailTemplate(opts: {
 
   return { subject: `Your VidhyaCare ${planName} receipt — ${invoiceNo}`, text, html };
 }
+
+/**
+ * For flows where the email IS the product (reset codes, verification codes):
+ * if it can't go out, say so instead of telling the user "code sent".
+ */
+export async function sendCodeEmail(params: { to: string; subject: string; text: string; html?: string }): Promise<void> {
+  const deployed = env.NODE_ENV === 'production' || !!process.env.VERCEL;
+  if (!isEmailConfigured()) {
+    if (!deployed) {
+      logger.info({ to: params.to, text: params.text }, 'DEV email (SMTP not configured)');
+      return;
+    }
+    logger.error({ subject: params.subject }, 'SMTP is not configured — code emails cannot be sent');
+    throw new ServiceUnavailableError(CODE_EMAIL_FAILED);
+  }
+  try {
+    await sendEmail(params);
+  } catch {
+    // sendEmail already logged the SMTP error with details.
+    throw new ServiceUnavailableError(CODE_EMAIL_FAILED);
+  }
+}
+
+const CODE_EMAIL_FAILED =
+  'We could not send the email right now. Please try again in a few minutes or write to support@vidhyacare.in.';

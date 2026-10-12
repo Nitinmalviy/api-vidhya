@@ -1,13 +1,43 @@
 import type { Request, Response } from 'express';
 import jwt from 'jsonwebtoken';
-import { Patient } from '../../models/Patient';
-import { sendEmail, otpEmailTemplate } from '../../services/email';
+import type { HydratedDocument } from 'mongoose';
+import { Patient, type IPatient } from '../../models/Patient';
+import { smsEnabled } from '../../services/sms';
+import { issuePhoneOtp, consumePhoneOtp } from '../../services/phoneOtp';
+import { toIndianMobile } from '../../utils/phone';
+
+type PatientDoc = HydratedDocument<IPatient>;
+import { sendEmail, sendCodeEmail, otpEmailTemplate } from '../../services/email';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt';
 import { generateOtp, hashOtp, otpExpiresAt } from '../../utils/otp';
-import { BadRequestError, ConflictError, ForbiddenError, UnauthorizedError } from '../../utils/AppError';
+import { BadRequestError, ConflictError, ForbiddenError, ServiceUnavailableError, UnauthorizedError } from '../../utils/AppError';
 import { env } from '../../config/env';
 import { logger } from '../../utils/logger';
 import { assertValidEmail, assertStrongPassword, assertValidPhone } from '../../utils/validation';
+
+/**
+ * New login = new session: bump the version so tokens from any previous
+ * device/browser stop working (single active session per user).
+ */
+async function startSession(patient: PatientDoc) {
+  patient.sessionVersion = (patient.sessionVersion ?? 0) + 1;
+  await patient.save();
+
+  const tokenPayload = { id: String(patient._id), role: 'user' as const, sv: patient.sessionVersion };
+  return {
+    user: {
+      id: patient._id,
+      name: patient.name,
+      email: patient.email,
+      phone: patient.phone,
+      plan: patient.plan,
+      planId: patient.planId ?? null,
+      planExpiresAt: patient.planExpiresAt ?? null,
+      hasAddress: (patient.addresses ?? []).length > 0,
+    },
+    tokens: { accessToken: signAccessToken(tokenPayload), refreshToken: signRefreshToken(tokenPayload) },
+  };
+}
 
 /* ─────────────────────────────────────────────
    POST /api/patient/auth/register
@@ -128,32 +158,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
     throw new ForbiddenError('Please verify your email before signing in');
   }
 
-  // New login = new session: bump the version so tokens from any previous
-  // device/browser stop working (single active session per user).
-  patient.sessionVersion = (patient.sessionVersion ?? 0) + 1;
-  await patient.save();
-
-  const tokenPayload = { id: String(patient._id), role: 'user' as const, sv: patient.sessionVersion };
-  const accessToken = signAccessToken(tokenPayload);
-  const refreshToken = signRefreshToken(tokenPayload);
-
-  res.status(200).json({
-    success: true,
-    message: 'Login successful',
-    data: {
-      user: {
-        id: patient._id,
-        name: patient.name,
-        email: patient.email,
-        phone: patient.phone,
-        plan: patient.plan,
-        planId: patient.planId ?? null,
-        planExpiresAt: patient.planExpiresAt ?? null,
-        hasAddress: (patient.addresses ?? []).length > 0,
-      },
-      tokens: { accessToken, refreshToken },
-    },
-  });
+  res.status(200).json({ success: true, message: 'Login successful', data: await startSession(patient) });
 };
 
 /* ─────────────────────────────────────────────
@@ -171,12 +176,13 @@ export const refresh = async (req: Request, res: Response): Promise<void> => {
 
   const patient = await Patient.findById(payload.id).select('sessionVersion').lean();
   if (!patient) throw new UnauthorizedError('Account no longer exists');
-  if (payload.sv !== undefined && (patient.sessionVersion ?? 0) !== payload.sv) {
-    throw new UnauthorizedError('You signed in on another device, so this session has ended.');
+  // Tokens without a session version predate single-session support; make them sign in again
+  // so they can't mint fresh tokens past a password change.
+  if (payload.sv === undefined || (patient.sessionVersion ?? 0) !== payload.sv) {
+    throw new UnauthorizedError('Your session has ended. Please sign in again.');
   }
 
-  const sv = payload.sv ?? patient.sessionVersion ?? 0;
-  const accessToken = signAccessToken({ id: payload.id, role: 'user', sv });
+  const accessToken = signAccessToken({ id: payload.id, role: 'user', sv: payload.sv });
 
   res.status(200).json({ success: true, data: { accessToken } });
 };
@@ -188,7 +194,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
   const { email } = req.body ?? {};
   if (!email) throw new BadRequestError('email is required');
 
-  const patient = await Patient.findOne({ email: String(email).toLowerCase() })
+  const patient = await Patient.findOne({ email: String(email).trim().toLowerCase() })
     .select('+passwordResetTokenHash +passwordResetExpires')
     .exec();
 
@@ -212,16 +218,12 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
     expiresInMinutes: env.OTP_EXPIRES_IN_MINUTES,
   });
 
-  try {
-    await sendEmail({
-      to: patient.email,
-      subject: 'Your VidhyaCare password reset OTP',
-      text: tpl.text,
-      html: tpl.html,
-    });
-  } catch (err) {
-    logger.error({ err, email: patient.email }, 'Patient forgot-password: failed to send OTP email');
-  }
+  await sendCodeEmail({
+    to: patient.email,
+    subject: 'Your VidhyaCare password reset OTP',
+    text: tpl.text,
+    html: tpl.html,
+  });
 
   res.status(200).json({ success: true, message: 'If that email is registered, a reset OTP has been sent.' });
 };
@@ -296,7 +298,49 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
   patient.password = String(newPassword);
   patient.passwordResetTokenHash = undefined;
   patient.passwordResetExpires = undefined;
+  // Whoever knew the old password is signed out everywhere.
+  patient.sessionVersion = (patient.sessionVersion ?? 0) + 1;
   await patient.save();
 
   res.status(200).json({ success: true, message: 'Password reset successful. You can now sign in.' });
+};
+
+/* ─────────────────────────────────────────────
+   GET /api/patient/auth/methods
+   Which sign-in options the app should offer.
+───────────────────────────────────────────── */
+export const authMethods = async (_req: Request, res: Response): Promise<void> => {
+  res.status(200).json({ success: true, data: { email: true, phoneOtp: smsEnabled() } });
+};
+
+const PHONE_SENT = 'If this number is linked to a VidhyaCare account, we have sent a code to it.';
+
+/* ─────────────────────────────────────────────
+   POST /api/patient/auth/phone/request-otp  { phone }
+   Only numbers a patient has already verified can sign in, and we text only
+   those, so this can't be used to spam arbitrary phones. The reply is the
+   same either way so it doesn't reveal who has an account.
+───────────────────────────────────────────── */
+export const requestPhoneLoginOtp = async (req: Request, res: Response): Promise<void> => {
+  if (!smsEnabled()) throw new ServiceUnavailableError('Phone sign-in is not available right now. Please use email.');
+  const phone = toIndianMobile(req.body?.phone);
+
+  const patient = await Patient.exists({ verifiedPhone: phone });
+  if (patient) {
+    await issuePhoneOtp(phone, 'LOGIN');
+  }
+  res.status(200).json({ success: true, message: PHONE_SENT });
+};
+
+/* ─────────────────────────────────────────────
+   POST /api/patient/auth/phone/verify-otp  { phone, otp }
+───────────────────────────────────────────── */
+export const verifyPhoneLoginOtp = async (req: Request, res: Response): Promise<void> => {
+  const phone = toIndianMobile(req.body?.phone);
+  await consumePhoneOtp(phone, 'LOGIN', req.body?.otp);
+
+  const patient = await Patient.findOne({ verifiedPhone: phone }).exec();
+  if (!patient) throw new BadRequestError('Invalid or expired code');
+
+  res.status(200).json({ success: true, message: 'Login successful', data: await startSession(patient) });
 };

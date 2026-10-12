@@ -4,7 +4,7 @@ import crypto from 'crypto';
 import { Doctor } from '../../models/Doctor';
 import { Clinic } from '../../models/Clinic';
 import { uploadBase64ToS3 } from '../../services/s3Upload';
-import { sendEmail, otpEmailTemplate } from '../../services/email';
+import { sendEmail, sendCodeEmail, otpEmailTemplate } from '../../services/email';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt';
 import { generateOtp, hashOtp, otpExpiresAt } from '../../utils/otp';
 import { BadRequestError, ConflictError, ForbiddenError, UnauthorizedError } from '../../utils/AppError';
@@ -205,12 +205,13 @@ export const refresh = async (req: Request, res: Response): Promise<void> => {
 
   const doctor = await Doctor.findById(payload.id).select('sessionVersion').lean();
   if (!doctor) throw new UnauthorizedError('Account no longer exists');
-  if (payload.sv !== undefined && (doctor.sessionVersion ?? 0) !== payload.sv) {
-    throw new UnauthorizedError('You signed in on another device, so this session has ended.');
+  // Tokens without a session version predate single-session support; make them sign in again
+  // so they can't mint fresh tokens past a password change.
+  if (payload.sv === undefined || (doctor.sessionVersion ?? 0) !== payload.sv) {
+    throw new UnauthorizedError('Your session has ended. Please sign in again.');
   }
 
-  const sv = payload.sv ?? doctor.sessionVersion ?? 0;
-  const accessToken = signAccessToken({ id: payload.id, role: 'doctor', sv });
+  const accessToken = signAccessToken({ id: payload.id, role: 'doctor', sv: payload.sv });
 
   res.status(200).json({ success: true, data: { accessToken } });
 };
@@ -263,11 +264,7 @@ export const resendVerification = async (req: Request, res: Response): Promise<v
     otp,
     expiresInMinutes: env.OTP_EXPIRES_IN_MINUTES,
   });
-  try {
-    await sendEmail({ to: doctor.email, subject: 'Your VidhyaCare verification code', text: tpl.text, html: tpl.html });
-  } catch (err) {
-    logger.error({ err, email: doctor.email }, 'Doctor resend verification: email failed');
-  }
+  await sendCodeEmail({ to: doctor.email, subject: 'Your VidhyaCare verification code', text: tpl.text, html: tpl.html });
 
   res.status(200).json({ success: true, message: 'If the account exists, a new code was sent' });
 };
@@ -276,7 +273,7 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
   const { email } = req.body ?? {};
   if (!email) throw new BadRequestError('email is required');
 
-  const doctor = await Doctor.findOne({ email: String(email).toLowerCase() })
+  const doctor = await Doctor.findOne({ email: String(email).trim().toLowerCase() })
     .select('+passwordResetTokenHash +passwordResetExpires')
     .exec();
   if (!doctor) {
@@ -296,16 +293,12 @@ export const forgotPassword = async (req: Request, res: Response): Promise<void>
     otp,
     expiresInMinutes: env.OTP_EXPIRES_IN_MINUTES,
   });
-  try {
-    await sendEmail({
-      to: doctor.email,
-      subject: 'Your VidhyaCare password reset code',
-      text: tpl.text,
-      html: tpl.html,
-    });
-  } catch (err) {
-    logger.error({ err, email: doctor.email }, 'Doctor forgot-password: email failed');
-  }
+  await sendCodeEmail({
+    to: doctor.email,
+    subject: 'Your VidhyaCare password reset code',
+    text: tpl.text,
+    html: tpl.html,
+  });
 
   res.status(200).json({ success: true, message: 'If the email exists, a reset code was sent' });
 };
@@ -316,9 +309,9 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
     throw new BadRequestError('email, code, and newPassword are required');
   }
 
-  const tokenHash = crypto.createHash('sha256').update(String(code)).digest('hex');
+  const tokenHash = crypto.createHash('sha256').update(String(code).trim()).digest('hex');
   const doctor = await Doctor.findOne({
-    email: String(email).toLowerCase(),
+    email: String(email).trim().toLowerCase(),
     passwordResetTokenHash: tokenHash,
     passwordResetExpires: { $gt: new Date() },
   })
@@ -331,6 +324,8 @@ export const resetPassword = async (req: Request, res: Response): Promise<void> 
   doctor.password = String(newPassword);
   doctor.passwordResetTokenHash = undefined;
   doctor.passwordResetExpires = undefined;
+  // Whoever knew the old password is signed out everywhere.
+  doctor.sessionVersion = (doctor.sessionVersion ?? 0) + 1;
   await doctor.save();
 
   res.status(200).json({ success: true, message: 'Password reset successful' });

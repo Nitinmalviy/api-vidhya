@@ -23,6 +23,8 @@ export interface IPatient {
   email: string;
   password?: string;
   phone: string;
+  /** Set only after the patient proved they own this number by OTP ("+91XXXXXXXXXX"). Enables phone sign-in. */
+  verifiedPhone?: string;
   plan: PatientPlan;
   planId?: string;
   planExpiresAt?: Date;
@@ -75,6 +77,7 @@ const patientSchema = new Schema<IPatient>(
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true, select: false },
     phone: { type: String, required: true, trim: true },
+    verifiedPhone: { type: String, unique: true, sparse: true },
     plan: { type: String, enum: ['FREE', 'PREMIUM'], default: 'FREE' },
     planId: { type: String, trim: true },
     planExpiresAt: { type: Date },

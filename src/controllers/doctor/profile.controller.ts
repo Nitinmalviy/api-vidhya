@@ -1,5 +1,6 @@
 import type { Response } from 'express';
 import { sanitizeSpecializations } from '../../utils/specializations';
+import { signAccessToken, signRefreshToken } from '../../utils/jwt';
 import { assertStrongPassword } from '../../utils/validation';
 import { Doctor } from '../../models/Doctor';
 import { Clinic } from '../../models/Clinic';
@@ -353,6 +354,14 @@ export const changeDoctorPassword = async (req: AuthRequest, res: Response): Pro
   }
 
   doctor.password = String(newPassword);
+  // Sign out every other device; this one gets fresh tokens below.
+  doctor.sessionVersion = (doctor.sessionVersion ?? 0) + 1;
   await doctor.save();
-  res.status(200).json({ success: true, message: 'Password changed successfully' });
+
+  const payload = { id: String(doctor._id), role: 'doctor' as const, sv: doctor.sessionVersion };
+  res.status(200).json({
+    success: true,
+    message: 'Password changed. You have been signed out on other devices.',
+    data: { tokens: { accessToken: signAccessToken(payload), refreshToken: signRefreshToken(payload) } },
+  });
 };

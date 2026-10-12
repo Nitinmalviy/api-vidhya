@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { signedInSecretLimit } from '../../../middleware/rateLimit';
 import { getProfile, updateProfile, updateKyc, uploadProfilePhoto, updateClinicAddress, changeDoctorPassword } from '../../../controllers/doctor/profile.controller';
 import { authenticate, authorize } from '../../../middleware/auth';
 
@@ -6,7 +7,7 @@ const router = Router();
 
 router.get('/', authenticate, authorize('doctor'), getProfile);
 router.patch('/', authenticate, authorize('doctor'), updateProfile);
-router.put('/password', authenticate, authorize('doctor'), changeDoctorPassword);
+router.put('/password', authenticate, authorize('doctor'), signedInSecretLimit, changeDoctorPassword);
 router.patch('/kyc', authenticate, authorize('doctor'), updateKyc);
 router.patch('/clinic-address', authenticate, authorize('doctor'), updateClinicAddress);
 router.post('/photo', authenticate, authorize('doctor'), uploadProfilePhoto);

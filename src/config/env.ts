@@ -16,6 +16,12 @@ const schema = z.object({
   TWILIO_ACCOUNT_SID: z.string().optional(),
   TWILIO_AUTH_TOKEN: z.string().optional(),
   TWILIO_PHONE_NUMBER: z.string().optional(),
+  /** Which SMS gateway sends OTPs. Auto-picks whichever has credentials when unset. */
+  SMS_PROVIDER: z.enum(['msg91', 'twilio']).optional(),
+  /** MSG91 (DLT-registered OTP template; the template must contain the ##otp## variable). */
+  MSG91_AUTH_KEY: z.string().optional(),
+  MSG91_OTP_TEMPLATE_ID: z.string().optional(),
+  MSG91_OTP_VAR: z.string().default('otp'),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().optional(),
   SMTP_USER: z.string().optional(),

@@ -9,7 +9,10 @@ import {
   listRecords,
   subscribe,
   updateProfile,
+  sendPhoneVerifyOtp,
+  verifyPhone,
 } from '../../../controllers/patient/profile.controller';
+import { signedInSecretLimit, signedInSmsLimits } from '../../../middleware/rateLimit';
 import {
   listAddresses,
   addAddress,
@@ -25,9 +28,11 @@ router.use(authenticate, authorize('user'));
 
 router.get('/', getProfile);
 router.put('/', updateProfile);
-router.delete('/', deleteAccount);
+router.delete('/', signedInSecretLimit, deleteAccount);
 router.post('/cancel-deletion', cancelAccountDeletion);
-router.put('/password', changePassword);
+router.put('/password', signedInSecretLimit, changePassword);
+router.post('/phone/send-otp', ...signedInSmsLimits, sendPhoneVerifyOtp);
+router.post('/phone/verify', signedInSecretLimit, verifyPhone);
 router.post('/subscribe', subscribe);
 
 router.get('/records', listRecords);

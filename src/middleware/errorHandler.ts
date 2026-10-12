@@ -10,7 +10,8 @@ export const errorHandler = (
   res: Response,
   _next: NextFunction
 ): void => {
-  if ((err as NodeJS.ErrnoException & { code?: string }).code === '11000') {
+  // Mongo reports duplicate keys as the number 11000.
+  if (Number((err as { code?: unknown }).code) === 11000) {
     res.status(409).json({ success: false, message: 'Already exists' });
     return;
   }
