@@ -1,5 +1,6 @@
 import type { Response } from 'express';
 import { escapeRegex } from '../../utils/specializations';
+import { effectiveAvailability, freeSlots, nowInIndia, offeredSlots } from '../../utils/availability';
 import { Types } from 'mongoose';
 import { Doctor } from '../../models/Doctor';
 import { Review } from '../../models/Review';
@@ -31,11 +32,25 @@ async function signClinic(doc: any): Promise<void> {
 }
 
 const DOCTOR_CARD_FIELDS =
-  'name specializations workType clinicId consultationFee photoUrl yearsExperience clinicAddress createdAt degreeDetails.degreeName opdAccess.status';
+  'name specializations workType clinicId consultationFee photoUrl yearsExperience clinicAddress createdAt degreeDetails.degreeName opdAccess.status gender availability';
 
 export const getDoctors = async (req: AuthRequest, res: Response): Promise<void> => {
-  const { search, specialization, page = '1', limit = '20', lat, lng, workType, maxFee, minExperience, video, sort } =
-    req.query;
+  const {
+    search,
+    specialization,
+    page = '1',
+    limit = '20',
+    lat,
+    lng,
+    workType,
+    maxFee,
+    minExperience,
+    video,
+    sort,
+    gender,
+    availableToday,
+  } = req.query;
+  const today = nowInIndia();
 
   const filter: Record<string, unknown> = { kycStatus: 'APPROVED' };
   // All filters run in the query, so paging and totals stay correct.
@@ -46,6 +61,16 @@ export const getDoctors = async (req: AuthRequest, res: Response): Promise<void>
   if (minExperience != null && Number.isFinite(minExpN) && minExpN > 0) filter.yearsExperience = { $gte: minExpN };
   // "Video consult" = doctors admin has cleared for Live-OPD video calls.
   if (video === 'true') filter['opdAccess.status'] = 'APPROVED';
+  if (gender === 'FEMALE' || gender === 'MALE') filter.gender = gender;
+  // Open today: accepting, today not blocked, and some hours set for this
+  // weekday (doctors who never set hours get the default Mon–Sat).
+  if (availableToday === 'true') {
+    filter['availability.accepting'] = { $ne: false };
+    filter['availability.blockedDates'] = { $ne: today.date };
+    const openToday: Record<string, unknown>[] = [{ [`availability.weekly.${today.dow}.0`]: { $exists: true } }];
+    if (today.dow !== 0) openToday.push({ 'availability.weekly.0': { $exists: false }, 'availability.weekly': { $exists: false } });
+    filter.$and = [...((filter.$and as unknown[]) ?? []), { $or: openToday }];
+  }
   // Case-insensitive exact match, so "gynecologist" finds "Gynecologist".
   if (specialization) {
     filter.specializations = { $regex: `^${escapeRegex(String(specialization).trim())}$`, $options: 'i' };
@@ -131,8 +156,23 @@ export const getDoctors = async (req: AuthRequest, res: Response): Promise<void>
   await Promise.all(doctors.map(signClinic));
 
   const ratings = await ratingsFor(doctors.map((d) => d._id));
-  const withRatings = doctors.map(({ opdAccess, degreeDetails, ...d }) => ({
+  // Today's free slots for the doctors on this page, from one bookings query.
+  const bookedToday = await Appointment.find({
+    doctorId: { $in: doctors.map((d) => d._id) },
+    date: today.date,
+    status: 'BOOKED',
+  })
+    .select('doctorId timeSlot')
+    .lean();
+  const bookedBy = new Map<string, string[]>();
+  for (const b of bookedToday) {
+    const k = String(b.doctorId);
+    bookedBy.set(k, [...(bookedBy.get(k) ?? []), b.timeSlot]);
+  }
+
+  const withRatings = doctors.map(({ opdAccess, degreeDetails, availability, ...d }) => ({
     ...d,
+    todaySlots: freeSlots(effectiveAvailability(availability), today.date, bookedBy.get(String(d._id)) ?? []).slice(0, 3),
     degreeName: degreeDetails?.degreeName ?? null,
     offersVideo: opdAccess?.status === 'APPROVED',
     rating: ratings.get(String(d._id)) ?? { average: 0, count: 0 },
@@ -237,4 +277,31 @@ export const addDoctorReview = async (req: AuthRequest, res: Response): Promise<
   ).lean();
 
   res.status(201).json({ success: true, message: 'Review saved', data: { review } });
+};
+
+/* GET /api/v1/patient/doctors/:id/slots?date=YYYY-MM-DD
+   The doctor's bookable slots for a day: what they offer, minus what's booked
+   and (today) what's already past. */
+export const getDoctorSlots = async (req: AuthRequest, res: Response): Promise<void> => {
+  const date = String(req.query.date ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new BadRequestError('date must be YYYY-MM-DD');
+  if (!Types.ObjectId.isValid(req.params.id)) throw new NotFoundError('Doctor');
+
+  const doctor = await Doctor.findOne({ _id: req.params.id, kycStatus: 'APPROVED' }).select('availability').lean();
+  if (!doctor) throw new NotFoundError('Doctor');
+
+  const a = effectiveAvailability(doctor.availability);
+  const booked = await Appointment.find({ doctorId: doctor._id, date, status: 'BOOKED' }).select('timeSlot').lean();
+  const free = new Set(freeSlots(a, date, booked.map((b) => b.timeSlot)));
+  const offered = offeredSlots(a, date);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      date,
+      accepting: a.accepting,
+      dayOff: offered.length === 0,
+      slots: offered.map((time) => ({ time, available: free.has(time) })),
+    },
+  });
 };

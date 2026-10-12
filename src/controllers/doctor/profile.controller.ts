@@ -38,6 +38,7 @@ export const getProfile = async (req: AuthRequest, res: Response): Promise<void>
     email: doctor.email,
     phone: doctor.phone,
     specializations: doctor.specializations ?? [],
+    gender: doctor.gender ?? null,
     workType: doctor.workType,
     clinic: doctor.clinicId ?? null,
     clinicAddress: doctor.clinicAddress ?? null,
@@ -64,7 +65,7 @@ export const getProfile = async (req: AuthRequest, res: Response): Promise<void>
 export const updateProfile = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
 
-  const { name, phone, specializations, clinicName, photoFile } = req.body ?? {};
+  const { name, phone, specializations, clinicName, photoFile, gender } = req.body ?? {};
 
   const doctor = await Doctor.findById(req.user.id).exec();
   if (!doctor) throw new NotFoundError('Doctor not found');
@@ -79,6 +80,12 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
   }
   if (specializations !== undefined) {
     doctor.specializations = sanitizeSpecializations(specializations);
+  }
+  if (gender !== undefined) {
+    if (gender !== null && gender !== 'FEMALE' && gender !== 'MALE' && gender !== 'OTHER') {
+      throw new BadRequestError("gender must be 'FEMALE', 'MALE' or 'OTHER'");
+    }
+    doctor.gender = gender ?? undefined;
   }
 
   // ── Profile Photo ──
@@ -108,6 +115,7 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
     email: updated!.email,
     phone: updated!.phone,
     specializations: updated!.specializations ?? [],
+    gender: updated!.gender ?? null,
     workType: updated!.workType,
     clinic: updated!.clinicId ?? null,
     kycStatus: updated!.kycStatus,
@@ -237,6 +245,7 @@ export const updateKyc = async (req: AuthRequest, res: Response): Promise<void> 
     email: updated!.email,
     phone: updated!.phone,
     specializations: updated!.specializations ?? [],
+    gender: updated!.gender ?? null,
     workType: updated!.workType,
     clinic: updated!.clinicId ?? null,
     kycStatus: updated!.kycStatus,

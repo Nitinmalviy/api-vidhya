@@ -10,6 +10,7 @@ import reviewsRouter from './reviews';
 import opdRouter from './opd';
 import prescriptionsRouter from './prescriptions';
 import walletRouter from './wallet';
+import availabilityRouter from './availability';
 
 const router = Router();
 router.get('/health', (_req, res) => {
@@ -26,6 +27,7 @@ router.use('/reviews', reviewsRouter);
 router.use('/opd', opdRouter);
 router.use('/prescriptions', prescriptionsRouter);
 router.use('/wallet', walletRouter);
+router.use('/availability', availabilityRouter);
 
 export default router;
 

@@ -2,7 +2,9 @@ import type { Response } from 'express';
 import { Prescription } from '../../models/Prescription';
 import { Patient } from '../../models/Patient';
 import type { AuthRequest } from '../../types';
-import { BadRequestError, UnauthorizedError } from '../../utils/AppError';
+import { BadRequestError, ForbiddenError, UnauthorizedError } from '../../utils/AppError';
+import { doctorPatientIds, isDoctorsPatient } from '../../services/careRelationship';
+import { escapeRegex } from '../../utils/specializations';
 import { uploadBase64ToS3 } from '../../services/s3Upload';
 import { createNotification } from '../../services/notification';
 import { Doctor } from '../../models/Doctor';
@@ -13,6 +15,13 @@ export const createPrescription = async (req: AuthRequest, res: Response): Promi
 
   if (!patientId || !medicines) {
     throw new BadRequestError('patientId and medicines are required');
+  }
+  if (typeof medicines !== 'string' || medicines.trim().length < 2 || medicines.length > 5000) {
+    throw new BadRequestError('medicines must be 2–5000 characters');
+  }
+  // Only for patients this doctor has a booking or a connected Live-OPD call with.
+  if (!(await isDoctorsPatient(req.user.id, String(patientId)))) {
+    throw new ForbiddenError('You can only prescribe for patients you have a consultation with');
   }
 
   // Handle attachments (base64)
@@ -69,9 +78,12 @@ export const searchPatients = async (req: AuthRequest, res: Response): Promise<v
     return;
   }
 
-  // Search by name or phone
-  const regex = new RegExp(q, 'i');
+  // Only this doctor's own patients — previously any doctor could search every
+  // patient's name and phone on the platform. Input is escaped (ReDoS).
+  const ids = await doctorPatientIds(req.user.id);
+  const regex = new RegExp(escapeRegex(q.trim().slice(0, 60)), 'i');
   const patients = await Patient.find({
+    _id: { $in: ids },
     $or: [{ name: regex }, { phone: regex }],
   })
     .select('name phone photoUrl')

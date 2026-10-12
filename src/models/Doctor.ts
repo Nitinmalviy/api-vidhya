@@ -1,8 +1,10 @@
 import bcrypt from 'bcryptjs';
 import mongoose, { type HydratedDocument, Schema, type Types } from 'mongoose';
+import type { IAvailability } from '../utils/availability';
 
 export type DoctorWorkType = 'OWN_CLINIC' | 'EMPLOYEE';
 export type DoctorKycStatus = 'PENDING' | 'APPROVED' | 'REJECTED';
+export type DoctorGender = 'FEMALE' | 'MALE' | 'OTHER';
 
 /**
  * Live-OPD is not open to every doctor. A doctor asks admin for access, saying
@@ -109,6 +111,12 @@ export interface IDoctor {
 
   // Where wallet withdrawals are paid out
   payoutAccount?: IPayoutAccount;
+
+  /** Optional — lets patients filter for a female doctor. */
+  gender?: DoctorGender;
+
+  /** Weekly open hours + blocked dates; drives bookable slots. Unset = default hours. */
+  availability?: IAvailability;
 
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
@@ -266,6 +274,19 @@ const doctorSchema = new Schema<IDoctor>(
       default: () => ({ status: 'NOT_REQUESTED' }),
     },
     payoutAccount: { type: payoutAccountSchema, required: false },
+    gender: { type: String, enum: ['FEMALE', 'MALE', 'OTHER'], required: false },
+    availability: {
+      type: new Schema(
+        {
+          accepting: { type: Boolean, default: true },
+          weekly: { type: [[String]], default: undefined },
+          blockedDates: { type: [String], default: [] },
+          updatedAt: { type: Date },
+        },
+        { _id: false }
+      ),
+      required: false,
+    },
     sessionVersion: {
       type: Number,
       default: 0,

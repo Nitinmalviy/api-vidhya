@@ -48,6 +48,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     clinicPhotoFile,
     consultationFee,
     yearsExperience,
+    gender,
   } = req.body ?? {};
 
   // ── Validate everything BEFORE creating records / uploading files ──
@@ -83,6 +84,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     workType,
     clinicId: clinicId || undefined,
     specializations: sanitizeSpecializations(specializations),
+    gender: gender === 'FEMALE' || gender === 'MALE' || gender === 'OTHER' ? gender : undefined,
     consultationFee: Number.isFinite(Number(consultationFee)) ? Math.max(0, Number(consultationFee)) : undefined,
     yearsExperience: Number.isFinite(Number(yearsExperience)) ? Math.max(0, Number(yearsExperience)) : undefined,
     kycStatus: 'PENDING',

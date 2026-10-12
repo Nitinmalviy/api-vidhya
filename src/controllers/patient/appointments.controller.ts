@@ -8,6 +8,7 @@ import { BadRequestError, NotFoundError, UnauthorizedError } from '../../utils/A
 import { createNotification } from '../../services/notification';
 import { sendEmail, appointmentEmailTemplate, infoEmailTemplate } from '../../services/email';
 import { logger } from '../../utils/logger';
+import { effectiveAvailability, freeSlots } from '../../utils/availability';
 import { refundCancelledAppointment, toRupees } from '../../services/wallet';
 
 /* POST /api/v1/patient/appointments */
@@ -23,6 +24,13 @@ export const createAppointment = async (req: AuthRequest, res: Response): Promis
 
   const doctor = await Doctor.findOne({ _id: doctorId, kycStatus: 'APPROVED' }).lean();
   if (!doctor) throw new NotFoundError('Doctor not available');
+
+  // Only slots the doctor actually offers, not in the past.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date))) throw new BadRequestError('date must be YYYY-MM-DD');
+  const offered = freeSlots(effectiveAvailability(doctor.availability), String(date), []);
+  if (!offered.includes(String(timeSlot))) {
+    throw new BadRequestError('This doctor is not available at that time. Please pick another slot.');
+  }
 
   // Prevent double-booking the same doctor slot
   const clash = await Appointment.findOne({
