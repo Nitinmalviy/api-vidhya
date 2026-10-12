@@ -11,6 +11,7 @@ import subscriptionRouter from './subscription';
 import medicineRemindersRouter from './medicine-reminders';
 import notificationsRouter from './notifications';
 import walletRouter from './wallet';
+import prescriptionsRouter from './prescriptions';
 
 const router = Router();
 
@@ -30,6 +31,7 @@ router.use('/subscription', subscriptionRouter);
 router.use('/medicine-reminders', medicineRemindersRouter);
 router.use('/notifications', notificationsRouter);
 router.use('/wallet', walletRouter);
+router.use('/prescriptions', prescriptionsRouter);
 
 export default router;
 

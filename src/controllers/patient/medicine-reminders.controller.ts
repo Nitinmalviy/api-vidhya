@@ -228,3 +228,87 @@ export const unmarkDoseTaken = async (req: AuthRequest, res: Response): Promise<
 
   res.status(200).json({ success: true, message: 'Unmarked' });
 };
+
+/** Calendar maths on YYYY-MM-DD strings, independent of the server's timezone. */
+function shiftDate(iso: string, days: number): string {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+function scheduledOn(
+  r: { startDate: string; endDate?: string; daysOfWeek: number[]; times: string[] },
+  iso: string
+): string[] {
+  if (r.startDate > iso) return [];
+  if (r.endDate && r.endDate < iso) return [];
+  const dow = new Date(`${iso}T00:00:00Z`).getUTCDay();
+  if (r.daysOfWeek.length && !r.daysOfWeek.includes(dow)) return [];
+  return [...r.times].sort();
+}
+
+/* GET /api/v1/patient/medicine-reminders/schedule?date=YYYY-MM-DD
+ * One day's doses across all active reminders, each marked taken or not, plus
+ * the 7 days ending on that date for the adherence ring. The client sends its
+ * own local date, so "today" is the patient's today, not the server's (UTC). */
+export const getSchedule = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+  const date = String(req.query.date ?? '');
+  if (!DATE_RE.test(date)) throw new BadRequestError('date must be YYYY-MM-DD');
+
+  const weekStart = shiftDate(date, -6);
+  const reminders = await MedicineReminder.find({ patientId: req.user.id, active: true }).lean();
+  const logs = await MedicineDoseLog.find({
+    patientId: req.user.id,
+    reminderId: { $in: reminders.map((r) => r._id) },
+    date: { $gte: weekStart, $lte: date },
+  })
+    .select('reminderId date time takenAt')
+    .lean();
+  const takenAt = new Map(logs.map((l) => [`${l.reminderId}|${l.date}|${l.time}`, l.takenAt]));
+
+  const doses = reminders
+    .flatMap((r) =>
+      scheduledOn(r, date).map((time) => {
+        const at = takenAt.get(`${r._id}|${date}|${time}`);
+        return {
+          reminderId: String(r._id),
+          medicineName: r.medicineName,
+          dosage: r.dosage ?? null,
+          notes: r.notes ?? null,
+          time,
+          taken: !!at,
+          takenAt: at ?? null,
+          endDate: r.endDate ?? null,
+        };
+      })
+    )
+    .sort((a, b) => a.time.localeCompare(b.time));
+
+  const week = Array.from({ length: 7 }, (_, i) => {
+    const day = shiftDate(weekStart, i);
+    let total = 0;
+    let taken = 0;
+    for (const r of reminders) {
+      for (const time of scheduledOn(r, day)) {
+        total++;
+        if (takenAt.has(`${r._id}|${day}|${time}`)) taken++;
+      }
+    }
+    return { date: day, total, taken };
+  });
+
+  const weekTotal = week.reduce((s, d) => s + d.total, 0);
+  const weekTaken = week.reduce((s, d) => s + d.taken, 0);
+
+  res.status(200).json({
+    success: true,
+    data: {
+      date,
+      doses,
+      summary: { total: doses.length, taken: doses.filter((d) => d.taken).length },
+      week,
+      weekAdherence: weekTotal ? Math.round((weekTaken / weekTotal) * 100) : null,
+    },
+  });
+};

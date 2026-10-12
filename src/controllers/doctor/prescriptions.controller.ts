@@ -4,6 +4,8 @@ import { Patient } from '../../models/Patient';
 import type { AuthRequest } from '../../types';
 import { BadRequestError, UnauthorizedError } from '../../utils/AppError';
 import { uploadBase64ToS3 } from '../../services/s3Upload';
+import { createNotification } from '../../services/notification';
+import { Doctor } from '../../models/Doctor';
 
 export const createPrescription = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
@@ -31,6 +33,16 @@ export const createPrescription = async (req: AuthRequest, res: Response): Promi
     medicines,
     notes,
     attachments: attachmentUrls,
+  });
+
+  // Tell the patient it's waiting in their app (createNotification never throws).
+  const doctor = await Doctor.findById(req.user.id).select('name').lean();
+  await createNotification({
+    userId: String(patientId),
+    role: 'patient',
+    type: 'GENERAL',
+    title: 'New prescription',
+    message: `${doctor?.name ?? 'Your doctor'} sent you a prescription. Open Prescriptions to view or download it.`,
   });
 
   res.status(201).json({ success: true, data: { prescription } });

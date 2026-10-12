@@ -9,6 +9,7 @@ import {
   listDoseLogs,
   markDoseTaken,
   unmarkDoseTaken,
+  getSchedule,
 } from '../../../controllers/patient/medicine-reminders.controller';
 
 const router = Router();
@@ -16,6 +17,7 @@ const router = Router();
 router.use(authenticate, authorize('user'));
 
 router.get('/', listReminders);
+router.get('/schedule', getSchedule);
 router.post('/', createReminder);
 router.put('/:id', updateReminder);
 router.patch('/:id/toggle', toggleReminder);
