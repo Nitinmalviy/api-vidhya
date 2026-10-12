@@ -31,12 +31,21 @@ async function signClinic(doc: any): Promise<void> {
 }
 
 const DOCTOR_CARD_FIELDS =
-  'name specializations workType clinicId consultationFee photoUrl yearsExperience clinicAddress createdAt';
+  'name specializations workType clinicId consultationFee photoUrl yearsExperience clinicAddress createdAt degreeDetails.degreeName opdAccess.status';
 
 export const getDoctors = async (req: AuthRequest, res: Response): Promise<void> => {
-  const { search, specialization, page = '1', limit = '20', lat, lng } = req.query;
+  const { search, specialization, page = '1', limit = '20', lat, lng, workType, maxFee, minExperience, video, sort } =
+    req.query;
 
   const filter: Record<string, unknown> = { kycStatus: 'APPROVED' };
+  // All filters run in the query, so paging and totals stay correct.
+  if (workType === 'OWN_CLINIC' || workType === 'EMPLOYEE') filter.workType = workType;
+  const maxFeeN = Number(maxFee);
+  if (maxFee != null && Number.isFinite(maxFeeN) && maxFeeN > 0) filter.consultationFee = { $lte: maxFeeN };
+  const minExpN = Number(minExperience);
+  if (minExperience != null && Number.isFinite(minExpN) && minExpN > 0) filter.yearsExperience = { $gte: minExpN };
+  // "Video consult" = doctors admin has cleared for Live-OPD video calls.
+  if (video === 'true') filter['opdAccess.status'] = 'APPROVED';
   // Case-insensitive exact match, so "gynecologist" finds "Gynecologist".
   if (specialization) {
     filter.specializations = { $regex: `^${escapeRegex(String(specialization).trim())}$`, $options: 'i' };
@@ -49,6 +58,12 @@ export const getDoctors = async (req: AuthRequest, res: Response): Promise<void>
       { specializations: { $regex: q, $options: 'i' } },
     ];
   }
+
+  const SORTS: Record<string, Record<string, 1 | -1>> = {
+    fee: { consultationFee: 1, createdAt: -1 },
+    experience: { yearsExperience: -1, createdAt: -1 },
+  };
+  const sortSpec = SORTS[String(sort)] ?? { createdAt: -1 };
 
   const pageNum = Math.max(1, Number(page));
   const limitNum = Math.min(50, Math.max(1, Number(limit)));
@@ -104,7 +119,7 @@ export const getDoctors = async (req: AuthRequest, res: Response): Promise<void>
       Doctor.find(filter)
         .populate('clinicId', 'name photoUrl isVerified')
         .select(DOCTOR_CARD_FIELDS)
-        .sort({ createdAt: -1 })
+        .sort(sortSpec)
         .skip((pageNum - 1) * limitNum)
         .limit(limitNum)
         .lean(),
@@ -116,8 +131,10 @@ export const getDoctors = async (req: AuthRequest, res: Response): Promise<void>
   await Promise.all(doctors.map(signClinic));
 
   const ratings = await ratingsFor(doctors.map((d) => d._id));
-  const withRatings = doctors.map((d) => ({
+  const withRatings = doctors.map(({ opdAccess, degreeDetails, ...d }) => ({
     ...d,
+    degreeName: degreeDetails?.degreeName ?? null,
+    offersVideo: opdAccess?.status === 'APPROVED',
     rating: ratings.get(String(d._id)) ?? { average: 0, count: 0 },
     distanceKm: hasGeo ? distanceById.get(String(d._id)) ?? null : null,
   }));
