@@ -1,4 +1,5 @@
 import type { Response } from 'express';
+import { escapeRegex } from '../../utils/specializations';
 import { Types } from 'mongoose';
 import { Doctor } from '../../models/Doctor';
 import { Review } from '../../models/Review';
@@ -36,9 +37,13 @@ export const getDoctors = async (req: AuthRequest, res: Response): Promise<void>
   const { search, specialization, page = '1', limit = '20', lat, lng } = req.query;
 
   const filter: Record<string, unknown> = { kycStatus: 'APPROVED' };
-  if (specialization) filter.specializations = { $in: [String(specialization)] };
+  // Case-insensitive exact match, so "gynecologist" finds "Gynecologist".
+  if (specialization) {
+    filter.specializations = { $regex: `^${escapeRegex(String(specialization).trim())}$`, $options: 'i' };
+  }
   if (search) {
-    const q = String(search);
+    // Escaped: raw user text in $regex allows catastrophic patterns (ReDoS).
+    const q = escapeRegex(String(search).trim().slice(0, 80));
     filter.$or = [
       { name: { $regex: q, $options: 'i' } },
       { specializations: { $regex: q, $options: 'i' } },

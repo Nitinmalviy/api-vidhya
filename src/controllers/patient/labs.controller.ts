@@ -1,4 +1,5 @@
 import type { Response } from 'express';
+import { escapeRegex } from '../../utils/specializations';
 import { Types } from 'mongoose';
 import { Lab } from '../../models/Lab';
 import { Patient } from '../../models/Patient';
@@ -30,7 +31,7 @@ export const listLabs = async (req: AuthRequest, res: Response): Promise<void> =
 
   const filter: Record<string, unknown> = { isActive: true };
   if (search) {
-    const q = String(search);
+    const q = escapeRegex(String(search));
     filter.$or = [
       { name: { $regex: q, $options: 'i' } },
       { 'address.city': { $regex: q, $options: 'i' } },

@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { escapeRegex } from '../../utils/specializations';
 import { Patient } from '../../models/Patient';
 
 export const getPatients = async (req: Request, res: Response): Promise<void> => {
@@ -9,7 +10,7 @@ export const getPatients = async (req: Request, res: Response): Promise<void> =>
     filter.plan = plan as string;
   }
   if (search) {
-    const q = String(search);
+    const q = escapeRegex(String(search));
     filter.$or = [
       { name: { $regex: q, $options: 'i' } },
       { email: { $regex: q, $options: 'i' } },

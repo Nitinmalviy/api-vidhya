@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { sanitizeSpecializations } from '../../utils/specializations';
 import crypto from 'crypto';
 import { Doctor } from '../../models/Doctor';
 import { Clinic } from '../../models/Clinic';
@@ -81,7 +82,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     phone: String(phone).trim(),
     workType,
     clinicId: clinicId || undefined,
-    specializations: Array.isArray(specializations) ? specializations : [],
+    specializations: sanitizeSpecializations(specializations),
     consultationFee: Number.isFinite(Number(consultationFee)) ? Math.max(0, Number(consultationFee)) : undefined,
     yearsExperience: Number.isFinite(Number(yearsExperience)) ? Math.max(0, Number(yearsExperience)) : undefined,
     kycStatus: 'PENDING',

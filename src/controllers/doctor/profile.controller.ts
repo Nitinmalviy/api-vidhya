@@ -1,4 +1,5 @@
 import type { Response } from 'express';
+import { sanitizeSpecializations } from '../../utils/specializations';
 import { Doctor } from '../../models/Doctor';
 import { Clinic } from '../../models/Clinic';
 import type { AuthRequest } from '../../types';
@@ -77,9 +78,7 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
     doctor.phone = String(phone).trim();
   }
   if (specializations !== undefined) {
-    doctor.specializations = Array.isArray(specializations)
-      ? specializations.map((s: unknown) => String(s).trim()).filter(Boolean)
-      : [];
+    doctor.specializations = sanitizeSpecializations(specializations);
   }
 
   // ── Profile Photo ──
