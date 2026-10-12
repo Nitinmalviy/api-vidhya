@@ -39,6 +39,13 @@ const schema = z.object({
   RAZORPAYX_ACCOUNT_NUMBER: z.string().optional(),
   /** Secret on the RazorpayX (payouts) webhook, if it differs from RAZORPAY_WEBHOOK_SECRET. */
   RAZORPAYX_WEBHOOK_SECRET: z.string().optional(),
+  // Legal identity on receipts/invoices. GSTIN is printed only when set.
+  COMPANY_LEGAL_NAME: z.string().optional(),
+  COMPANY_GSTIN: z
+    .string()
+    .regex(/^\d{2}[A-Z]{5}\d{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/, 'COMPANY_GSTIN is not a valid GSTIN')
+    .optional(),
+  COMPANY_ADDRESS: z.string().optional(),
   // LiveKit — powers the 1:1 Live-OPD video calls.
   LIVEKIT_URL: z.string().optional(),
   LIVEKIT_API_KEY: z.string().optional(),

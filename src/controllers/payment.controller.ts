@@ -8,6 +8,7 @@ import {
   verifyOrderSignature,
 } from '../config/razorpay';
 import { Doctor } from '../models/Doctor';
+import { COMPANY } from '../config/company';
 import { LabBooking } from '../models/LabBooking';
 import { inTransaction, notifyAppointmentPaid, postOnce, settleAppointmentPayment, toPaise } from '../services/wallet';
 import { completeTopup } from './patient/wallet.controller';
@@ -46,8 +47,8 @@ function buildSubscriptionReceiptPdf(t: ITransaction & { _id: unknown; createdAt
 
     // Header
     doc.fontSize(24).fillColor('#2563EB').text('VidhyaCare', { align: 'right' });
-    doc.fontSize(10).fillColor('#666666').text('VidhyaCare Health Services Pvt Ltd', { align: 'right' });
-    doc.text('GSTIN: 22AAAAA0000A1Z5', { align: 'right' });
+    doc.fontSize(10).fillColor('#666666').text(COMPANY.legalName, { align: 'right' });
+    if (COMPANY.gstin) doc.text(`GSTIN: ${COMPANY.gstin}`, { align: 'right' });
     doc.moveDown(2);
 
     doc.fontSize(20).fillColor('#000000').text('SUBSCRIPTION RECEIPT', { underline: true });
@@ -88,7 +89,7 @@ function buildSubscriptionReceiptPdf(t: ITransaction & { _id: unknown; createdAt
 
     doc.moveDown(6);
     doc.font('Helvetica');
-    doc.text('For VidhyaCare Health Services Pvt Ltd', { align: 'right' });
+    doc.text(`For ${COMPANY.legalName}`, { align: 'right' });
     doc.moveDown(2);
     doc.text('Authorized Signatory', { align: 'right' });
 

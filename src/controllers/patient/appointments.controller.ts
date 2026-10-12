@@ -8,6 +8,7 @@ import { BadRequestError, NotFoundError, UnauthorizedError } from '../../utils/A
 import { createNotification } from '../../services/notification';
 import { sendEmail, appointmentEmailTemplate, infoEmailTemplate } from '../../services/email';
 import { logger } from '../../utils/logger';
+import { COMPANY } from '../../config/company';
 import { effectiveAvailability, freeSlots } from '../../utils/availability';
 import { refundCancelledAppointment, toRupees } from '../../services/wallet';
 
@@ -227,13 +228,12 @@ function buildAppointmentInvoicePdf(appointment: any, patientName: string): Prom
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
 
-    const gstNumber = '22AAAAA0000A1Z5';
-    const companyName = 'VidhyaCare Health Services Pvt Ltd';
 
     // Header
     doc.fontSize(24).fillColor('#2563EB').text('VidhyaCare', { align: 'right' });
-    doc.fontSize(10).fillColor('#666666').text(companyName, { align: 'right' });
-    doc.text(`GSTIN: ${gstNumber}`, { align: 'right' });
+    doc.fontSize(10).fillColor('#666666').text(COMPANY.legalName, { align: 'right' });
+    // Only a real, configured GSTIN — this used to print a sample number.
+    if (COMPANY.gstin) doc.text(`GSTIN: ${COMPANY.gstin}`, { align: 'right' });
     doc.moveDown(2);
 
     doc.fontSize(20).fillColor('#000000').text('INVOICE', { underline: true });
@@ -280,7 +280,7 @@ function buildAppointmentInvoicePdf(appointment: any, patientName: string): Prom
 
     doc.moveDown(6);
     doc.font('Helvetica');
-    doc.text('For VidhyaCare Health Services Pvt Ltd', { align: 'right' });
+    doc.text(`For ${COMPANY.legalName}`, { align: 'right' });
     doc.moveDown(2);
     doc.text('Authorized Signatory', { align: 'right' });
 
