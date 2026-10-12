@@ -10,6 +10,7 @@ import lockerRouter from './locker';
 import subscriptionRouter from './subscription';
 import medicineRemindersRouter from './medicine-reminders';
 import notificationsRouter from './notifications';
+import walletRouter from './wallet';
 
 const router = Router();
 
@@ -28,6 +29,7 @@ router.use('/locker', lockerRouter);
 router.use('/subscription', subscriptionRouter);
 router.use('/medicine-reminders', medicineRemindersRouter);
 router.use('/notifications', notificationsRouter);
+router.use('/wallet', walletRouter);
 
 export default router;
 

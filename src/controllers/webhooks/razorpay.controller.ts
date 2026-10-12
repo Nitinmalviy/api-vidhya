@@ -1,6 +1,8 @@
 import crypto from 'crypto';
 import type { Request, Response } from 'express';
-import { PLAN_DURATION_DAYS, PLAN_NAMES } from '../../config/razorpay';
+import { PLAN_DURATION_DAYS, PLAN_NAMES, safeEqualHex } from '../../config/razorpay';
+import { completeTopup } from '../patient/wallet.controller';
+import { applyPayoutState } from '../../services/withdrawals';
 import { env } from '../../config/env';
 import { Patient } from '../../models/Patient';
 import { Subscription, type SubscriptionStatus } from '../../models/Subscription';
@@ -20,7 +22,12 @@ import { logger } from '../../utils/logger';
  *   Secret  RAZORPAY_WEBHOOK_SECRET
  *   Events  subscription.authenticated, subscription.activated,
  *           subscription.charged, subscription.pending, subscription.halted,
- *           subscription.cancelled, subscription.completed
+ *           subscription.cancelled, subscription.completed,
+ *           payment.captured (wallet top-ups)
+ *
+ * RazorpayX → Webhooks (same URL; secret RAZORPAYX_WEBHOOK_SECRET or the one above):
+ *   Events  payout.queued, payout.pending, payout.processed, payout.reversed,
+ *           payout.failed, payout.rejected, payout.updated
  */
 
 const fromEpoch = (value: unknown): Date | null =>
@@ -42,8 +49,9 @@ const EVENT_STATUS: Record<string, SubscriptionStatus> = {
 };
 
 export const handleRazorpayWebhook = async (req: Request, res: Response): Promise<void> => {
-  const secret = env.RAZORPAY_WEBHOOK_SECRET;
-  if (!secret) {
+  // Payments and RazorpayX payouts may be configured with different secrets.
+  const secrets = [env.RAZORPAY_WEBHOOK_SECRET, env.RAZORPAYX_WEBHOOK_SECRET].filter(Boolean) as string[];
+  if (secrets.length === 0) {
     logger.error('Razorpay webhook hit but RAZORPAY_WEBHOOK_SECRET is not set');
     res.status(503).json({ success: false, message: 'Webhook not configured' });
     return;
@@ -58,10 +66,10 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
   }
 
   const signature = String(req.headers['x-razorpay-signature'] ?? '');
-  const expected = crypto.createHmac('sha256', secret).update(req.body).digest('hex');
-  const ok =
-    signature.length === expected.length &&
-    crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+  const body = req.body as Buffer;
+  const ok = secrets.some((secret) =>
+    safeEqualHex(crypto.createHmac('sha256', secret).update(body).digest('hex'), signature)
+  );
   if (!ok) {
     logger.warn('Razorpay webhook signature mismatch — ignoring');
     res.status(400).json({ success: false, message: 'Invalid signature' });
@@ -83,6 +91,28 @@ export const handleRazorpayWebhook = async (req: Request, res: Response): Promis
   // Acknowledge first-class: Razorpay retries on any non-2xx, and a duplicate
   // delivery must not double-extend a plan. Everything below is idempotent.
   try {
+    // Wallet top-up captured — credits even if the app closed before /verify.
+    if (event === 'payment.captured' && paymentEntity?.notes?.kind === 'WALLET_TOPUP' && paymentEntity.order_id) {
+      await completeTopup(String(paymentEntity.order_id), String(paymentEntity.id));
+      res.status(200).json({ success: true });
+      return;
+    }
+
+    // RazorpayX payout lifecycle for doctor withdrawals. reference_id is our withdrawal id.
+    if (event.startsWith('payout.')) {
+      const payout = payload?.payload?.payout?.entity;
+      if (payout?.id && payout?.reference_id) {
+        await applyPayoutState(String(payout.reference_id), {
+          id: String(payout.id),
+          status: String(payout.status ?? ''),
+          utr: payout.utr ?? null,
+          failure_reason: payout.failure_reason ?? payout.status_details?.description ?? null,
+        });
+      }
+      res.status(200).json({ success: true });
+      return;
+    }
+
     if (!subEntity?.id) {
       logger.info({ event }, 'Razorpay webhook without a subscription entity — ignored');
       res.status(200).json({ success: true });

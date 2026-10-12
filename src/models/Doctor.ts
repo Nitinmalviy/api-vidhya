@@ -36,6 +36,19 @@ export interface IOpdAccess {
   adminNote?: string;
 }
 
+/**
+ * Bank account for withdrawals. The full account number is handed straight to
+ * RazorpayX and never stored here — only the last 4 digits for display.
+ */
+export interface IPayoutAccount {
+  holderName: string;
+  ifsc: string;
+  last4: string;
+  razorpayContactId: string;
+  razorpayFundAccountId: string;
+  addedAt: Date;
+}
+
 export interface IDegreeDetails {
   degreeName: string;
   university: string;
@@ -94,6 +107,9 @@ export interface IDoctor {
   // Live-OPD access, granted by admin
   opdAccess: IOpdAccess;
 
+  // Where wallet withdrawals are paid out
+  payoutAccount?: IPayoutAccount;
+
   comparePassword(candidatePassword: string): Promise<boolean>;
 }
 
@@ -149,6 +165,18 @@ const opdAccessSchema = new Schema<IOpdAccess>(
     reviewedAt: { type: Date, default: null },
     reviewedBy: { type: Schema.Types.ObjectId, ref: 'Admin' },
     adminNote: { type: String, trim: true, maxlength: 1000 },
+  },
+  { _id: false }
+);
+
+const payoutAccountSchema = new Schema<IPayoutAccount>(
+  {
+    holderName: { type: String, required: true, trim: true, maxlength: 120 },
+    ifsc: { type: String, required: true, uppercase: true, trim: true },
+    last4: { type: String, required: true },
+    razorpayContactId: { type: String, required: true },
+    razorpayFundAccountId: { type: String, required: true },
+    addedAt: { type: Date, required: true },
   },
   { _id: false }
 );
@@ -237,6 +265,7 @@ const doctorSchema = new Schema<IDoctor>(
       type: opdAccessSchema,
       default: () => ({ status: 'NOT_REQUESTED' }),
     },
+    payoutAccount: { type: payoutAccountSchema, required: false },
     sessionVersion: {
       type: Number,
       default: 0,

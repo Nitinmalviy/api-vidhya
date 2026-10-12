@@ -1,7 +1,15 @@
 import type { Request, Response } from 'express';
-import Razorpay from 'razorpay';
-import crypto from 'crypto';
 import PDFDocument from 'pdfkit';
+import {
+  razorpay,
+  RAZORPAY_KEY_ID,
+  PLAN_PRICES,
+  PLAN_NAMES,
+  verifyOrderSignature,
+} from '../config/razorpay';
+import { Doctor } from '../models/Doctor';
+import { inTransaction, notifyAppointmentPaid, postOnce, settleAppointmentPayment, toPaise } from '../services/wallet';
+import { completeTopup } from './patient/wallet.controller';
 import { Transaction, type ITransaction } from '../models/Transaction';
 import { Patient } from '../models/Patient';
 import { Appointment } from '../models/Appointment';
@@ -87,54 +95,78 @@ function buildSubscriptionReceiptPdf(t: ITransaction & { _id: unknown; createdAt
   });
 }
 
-// Initialize Razorpay with environment variables or fallback test keys
-const razorpay = new Razorpay({
-  key_id: process.env.Test_Key_ID || process.env.RAZORPAY_KEY_ID || 'rzp_test_mock_key',
-  key_secret: process.env.Test_Key_Secret || process.env.RAZORPAY_KEY_SECRET || 'rzp_test_mock_secret',
-});
-
 /**
  * POST /api/v1/payments/create-order
  * Creates a Razorpay order and returns it to the client
  */
 export const createOrder = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { amount, type, metadata } = req.body;
-    const patientId = (req as any).user?.id; // Assumes auth middleware populates req.user
+    const { type, metadata } = req.body ?? {};
+    const patientId = (req as any).user?.id;
 
-    if (!patientId || !amount || !type) {
+    if (!patientId || !type) {
       res.status(400).json({ success: false, message: 'Missing required fields' });
       return;
     }
 
-    // Create order on Razorpay
-    const options = {
-      amount: amount * 100, // Razorpay works in paise
-      currency: 'INR',
-      receipt: `rcpt_${Date.now()}`,
-    };
+    // The price is always decided here. Never trust an `amount` from the client —
+    // it previously allowed buying a plan for ₹1.
+    let amount: number;
+    let orderMeta: Record<string, unknown>;
+    if (type === 'SUBSCRIPTION') {
+      const planId = metadata?.planId;
+      if (planId !== 'single' && planId !== 'family') {
+        res.status(400).json({ success: false, message: "planId must be 'single' or 'family'" });
+        return;
+      }
+      amount = PLAN_PRICES[planId as 'single' | 'family'];
+      orderMeta = { planId, planName: PLAN_NAMES[planId as 'single' | 'family'] };
+    } else if (type === 'APPOINTMENT') {
+      const appointmentId = String(metadata?.appointmentId ?? '');
+      const appt = Types.ObjectId.isValid(appointmentId)
+        ? await Appointment.findOne({ _id: appointmentId, patientId }).lean()
+        : null;
+      if (!appt) {
+        res.status(404).json({ success: false, message: 'Appointment not found' });
+        return;
+      }
+      if (appt.status !== 'BOOKED' || appt.paymentStatus === 'PAID') {
+        res.status(400).json({ success: false, message: 'This appointment is already paid or no longer payable' });
+        return;
+      }
+      const doctor = await Doctor.findById(appt.doctorId).select('consultationFee').lean();
+      const fee = appt.price ?? doctor?.consultationFee;
+      if (!fee || fee <= 0) {
+        res.status(400).json({ success: false, message: 'This appointment has no fee to pay' });
+        return;
+      }
+      amount = fee;
+      orderMeta = { appointmentId };
+    } else {
+      res.status(400).json({ success: false, message: 'Unsupported payment type' });
+      return;
+    }
 
+    const options = { amount: toPaise(amount), currency: 'INR', receipt: `rcpt_${Date.now()}` };
     const order = await razorpay.orders.create(options);
-    const orderId = order.id;
 
-    // Create a pending transaction in DB
     const transaction = await Transaction.create({
       patientId: new Types.ObjectId(patientId),
       amount,
       currency: 'INR',
       type,
       status: 'PENDING',
-      razorpayOrderId: orderId,
-      metadata,
+      razorpayOrderId: order.id,
+      metadata: orderMeta,
     });
 
     res.status(200).json({
       success: true,
       data: {
-        orderId,
+        orderId: order.id,
         amount: options.amount,
         currency: options.currency,
-        key: process.env.Test_Key_ID || process.env.RAZORPAY_KEY_ID || 'rzp_test_mock_key',
+        key: RAZORPAY_KEY_ID || 'rzp_test_mock_key',
         transactionId: transaction._id,
       },
     });
@@ -199,35 +231,41 @@ export const getPaymentHistory = async (req: Request, res: Response): Promise<vo
  */
 export const verifyPayment = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body;
+    const { razorpay_order_id, razorpay_payment_id, razorpay_signature } = req.body ?? {};
+    const patientId = (req as any).user?.id;
 
-    // Validate Signature
-    const secret = process.env.Test_Key_Secret || process.env.RAZORPAY_KEY_SECRET || 'rzp_test_mock_secret';
-    
-    const body = razorpay_order_id + "|" + razorpay_payment_id;
-    const expectedSignature = crypto
-      .createHmac('sha256', secret)
-      .update(body.toString())
-      .digest('hex');
-
-    if (expectedSignature !== razorpay_signature) {
+    // Constant-time check (a plain !== leaks timing).
+    if (!verifyOrderSignature(razorpay_order_id, razorpay_payment_id, razorpay_signature)) {
       res.status(400).json({ success: false, message: 'Invalid signature' });
       return;
     }
 
-    // Find and update transaction
+    const existing = await Transaction.findOne({ razorpayOrderId: razorpay_order_id, patientId }).lean();
+    if (!existing) {
+      res.status(404).json({ success: false, message: 'Transaction not found' });
+      return;
+    }
+
+    if (existing.type === 'WALLET_TOPUP') {
+      await completeTopup(razorpay_order_id, razorpay_payment_id, razorpay_signature);
+      res.status(200).json({ success: true, message: 'Payment verified successfully' });
+      return;
+    }
+
+    // Only the PENDING → SUCCESS transition fulfils, so replaying /verify can't
+    // re-extend a plan or re-send receipts.
     const transaction = await Transaction.findOneAndUpdate(
-      { razorpayOrderId: razorpay_order_id },
-      { 
+      { _id: existing._id, status: 'PENDING' },
+      {
         status: 'SUCCESS',
         razorpayPaymentId: razorpay_payment_id,
-        razorpaySignature: razorpay_signature
+        razorpaySignature: razorpay_signature,
       },
       { new: true }
     );
 
     if (!transaction) {
-      res.status(404).json({ success: false, message: 'Transaction not found' });
+      res.status(200).json({ success: true, message: 'Payment already verified' });
       return;
     }
 
@@ -280,8 +318,39 @@ export const verifyPayment = async (req: Request, res: Response): Promise<void> 
         req.log.error(err, 'Subscription receipt email/notification failed');
       }
     } else if (transaction.type === 'APPOINTMENT') {
-      if (transaction.metadata?.appointmentId) {
-        await Appointment.findByIdAndUpdate(transaction.metadata.appointmentId, { paymentStatus: 'PAID' });
+      // Previously this set a `paymentStatus` field the schema didn't have, so
+      // Mongoose silently dropped it and payments were never recorded.
+      const appointmentId = transaction.metadata?.appointmentId;
+      if (appointmentId) {
+        try {
+          await inTransaction((session) =>
+            settleAppointmentPayment({
+              appointmentId: String(appointmentId),
+              patientId: String(transaction.patientId),
+              amount: toPaise(transaction.amount),
+              method: 'RAZORPAY',
+              session,
+            })
+          );
+          await notifyAppointmentPaid(String(appointmentId));
+        } catch (err) {
+          // Paid, but the appointment was cancelled or paid another way meanwhile.
+          // The money must not vanish: park it in the patient's wallet.
+          req.log.warn({ err, appointmentId }, 'Paid appointment not payable — crediting wallet');
+          await postOnce(`appt-pay-orphan:${transaction.razorpayOrderId}`, [
+            {
+              ownerType: 'patient',
+              ownerId: String(transaction.patientId),
+              bucket: 'balance',
+              direction: 'CREDIT',
+              amount: toPaise(transaction.amount),
+              kind: 'APPOINTMENT_REFUND',
+              description: 'Refund · payment for an appointment that was no longer payable',
+              refType: 'Transaction',
+              refId: transaction._id,
+            },
+          ]);
+        }
       }
     }
 

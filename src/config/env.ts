@@ -35,6 +35,10 @@ const schema = z.object({
   /** Razorpay plan ids for UPI Autopay mandates (create once via `npm run razorpay:plans`). */
   RAZORPAY_PLAN_SINGLE: z.string().optional(),
   RAZORPAY_PLAN_FAMILY: z.string().optional(),
+  /** RazorpayX business account number that doctor withdrawals are paid out from. */
+  RAZORPAYX_ACCOUNT_NUMBER: z.string().optional(),
+  /** Secret on the RazorpayX (payouts) webhook, if it differs from RAZORPAY_WEBHOOK_SECRET. */
+  RAZORPAYX_WEBHOOK_SECRET: z.string().optional(),
   // LiveKit — powers the 1:1 Live-OPD video calls.
   LIVEKIT_URL: z.string().optional(),
   LIVEKIT_API_KEY: z.string().optional(),
