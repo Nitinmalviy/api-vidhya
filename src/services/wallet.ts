@@ -40,7 +40,7 @@ export interface LedgerOp {
   amount: number; // paise
   kind: WalletEntryKind;
   description: string;
-  refType?: 'Appointment' | 'Transaction' | 'Withdrawal';
+  refType?: 'Appointment' | 'Transaction' | 'Withdrawal' | 'LabBooking';
   refId?: Types.ObjectId | string;
 }
 

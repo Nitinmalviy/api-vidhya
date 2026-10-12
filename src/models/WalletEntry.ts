@@ -20,7 +20,11 @@ export type WalletEntryKind =
   /** Doctor withdrew to their bank account. */
   | 'WITHDRAWAL'
   /** A failed / reversed / rejected withdrawal returned to the doctor. */
-  | 'WITHDRAWAL_REVERSAL';
+  | 'WITHDRAWAL_REVERSAL'
+  /** Patient paid for a home lab-test booking from the wallet. */
+  | 'LAB_PAYMENT'
+  /** Patient refunded for a cancelled, paid lab booking. */
+  | 'LAB_REFUND';
 
 /**
  * Append-only ledger. Every change to a wallet writes exactly one entry per
@@ -38,7 +42,7 @@ export interface IWalletEntry {
   balanceAfter: number; // value of `bucket` after this entry, paise
   idempotencyKey: string;
   description: string;
-  refType?: 'Appointment' | 'Transaction' | 'Withdrawal';
+  refType?: 'Appointment' | 'Transaction' | 'Withdrawal' | 'LabBooking';
   refId?: Types.ObjectId;
   createdAt?: Date;
 }
@@ -59,6 +63,8 @@ const walletEntrySchema = new Schema<IWalletEntry>(
         'EARNING_REVERSED',
         'WITHDRAWAL',
         'WITHDRAWAL_REVERSAL',
+        'LAB_PAYMENT',
+        'LAB_REFUND',
       ],
       required: true,
     },
@@ -68,7 +74,7 @@ const walletEntrySchema = new Schema<IWalletEntry>(
     balanceAfter: { type: Number, required: true },
     idempotencyKey: { type: String, required: true, unique: true },
     description: { type: String, required: true, maxlength: 200 },
-    refType: { type: String, enum: ['Appointment', 'Transaction', 'Withdrawal'] },
+    refType: { type: String, enum: ['Appointment', 'Transaction', 'Withdrawal', 'LabBooking'] },
     refId: { type: Schema.Types.ObjectId },
   },
   { timestamps: { createdAt: true, updatedAt: false } }

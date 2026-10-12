@@ -1,7 +1,7 @@
 import mongoose, { Schema, type Types } from 'mongoose';
 
 export type TransactionStatus = 'PENDING' | 'SUCCESS' | 'FAILED';
-export type TransactionType = 'SUBSCRIPTION' | 'APPOINTMENT' | 'WALLET_TOPUP';
+export type TransactionType = 'SUBSCRIPTION' | 'APPOINTMENT' | 'WALLET_TOPUP' | 'LAB_BOOKING';
 
 export interface ITransaction {
   patientId: Types.ObjectId;
@@ -20,7 +20,7 @@ const transactionSchema = new Schema<ITransaction>(
     patientId: { type: Schema.Types.ObjectId, ref: 'Patient', required: true, index: true },
     amount: { type: Number, required: true },
     currency: { type: String, default: 'INR' },
-    type: { type: String, enum: ['SUBSCRIPTION', 'APPOINTMENT', 'WALLET_TOPUP'], required: true },
+    type: { type: String, enum: ['SUBSCRIPTION', 'APPOINTMENT', 'WALLET_TOPUP', 'LAB_BOOKING'], required: true },
     status: { type: String, enum: ['PENDING', 'SUCCESS', 'FAILED'], default: 'PENDING' },
     razorpayOrderId: { type: String, required: true, unique: true },
     razorpayPaymentId: { type: String },

@@ -8,6 +8,7 @@ import {
   verifyOrderSignature,
 } from '../config/razorpay';
 import { Doctor } from '../models/Doctor';
+import { LabBooking } from '../models/LabBooking';
 import { inTransaction, notifyAppointmentPaid, postOnce, settleAppointmentPayment, toPaise } from '../services/wallet';
 import { completeTopup } from './patient/wallet.controller';
 import { Transaction, type ITransaction } from '../models/Transaction';
@@ -142,6 +143,21 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
       }
       amount = fee;
       orderMeta = { appointmentId };
+    } else if (type === 'LAB_BOOKING') {
+      const labBookingId = String(metadata?.labBookingId ?? '');
+      const booking = Types.ObjectId.isValid(labBookingId)
+        ? await LabBooking.findOne({ _id: labBookingId, patientId }).lean()
+        : null;
+      if (!booking) {
+        res.status(404).json({ success: false, message: 'Lab booking not found' });
+        return;
+      }
+      if (booking.status !== 'BOOKED' || booking.paymentStatus !== 'UNPAID') {
+        res.status(400).json({ success: false, message: 'This lab booking is already paid or no longer payable' });
+        return;
+      }
+      amount = booking.total;
+      orderMeta = { labBookingId };
     } else {
       res.status(400).json({ success: false, message: 'Unsupported payment type' });
       return;
@@ -316,6 +332,28 @@ export const verifyPayment = async (req: Request, res: Response): Promise<void> 
         }
       } catch (err) {
         req.log.error(err, 'Subscription receipt email/notification failed');
+      }
+    } else if (transaction.type === 'LAB_BOOKING') {
+      const labBookingId = transaction.metadata?.labBookingId;
+      const paid = await LabBooking.findOneAndUpdate(
+        { _id: labBookingId, patientId: transaction.patientId, status: 'BOOKED', paymentStatus: 'UNPAID' },
+        { paymentStatus: 'PAID', paymentMethod: 'RAZORPAY', amountPaid: toPaise(transaction.amount) }
+      );
+      if (!paid) {
+        // Cancelled (or paid another way) while the sheet was open: refund to wallet.
+        await postOnce(`lab-pay-orphan:${transaction.razorpayOrderId}`, [
+          {
+            ownerType: 'patient',
+            ownerId: String(transaction.patientId),
+            bucket: 'balance',
+            direction: 'CREDIT',
+            amount: toPaise(transaction.amount),
+            kind: 'LAB_REFUND',
+            description: 'Refund · payment for a lab booking that was no longer payable',
+            refType: 'Transaction',
+            refId: transaction._id,
+          },
+        ]);
       }
     } else if (transaction.type === 'APPOINTMENT') {
       // Previously this set a `paymentStatus` field the schema didn't have, so
