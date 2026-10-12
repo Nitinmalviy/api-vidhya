@@ -1,5 +1,7 @@
 import type { Response } from 'express';
+import { Types } from 'mongoose';
 import { Prescription } from '../../models/Prescription';
+import { Appointment } from '../../models/Appointment';
 import { Patient } from '../../models/Patient';
 import type { AuthRequest } from '../../types';
 import { BadRequestError, ForbiddenError, UnauthorizedError } from '../../utils/AppError';
@@ -11,7 +13,7 @@ import { Doctor } from '../../models/Doctor';
 
 export const createPrescription = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
-  const { patientId, opdSessionId, medicines, notes, attachments } = req.body;
+  const { patientId, opdSessionId, appointmentId, medicines, notes, attachments } = req.body;
 
   if (!patientId || !medicines) {
     throw new BadRequestError('patientId and medicines are required');
@@ -22,6 +24,16 @@ export const createPrescription = async (req: AuthRequest, res: Response): Promi
   // Only for patients this doctor has a booking or a connected Live-OPD call with.
   if (!(await isDoctorsPatient(req.user.id, String(patientId)))) {
     throw new ForbiddenError('You can only prescribe for patients you have a consultation with');
+  }
+
+  // Optional link to the visit it came from — must be this doctor's, with this patient.
+  let linkedAppointmentId: string | undefined;
+  if (appointmentId) {
+    const appt = Types.ObjectId.isValid(String(appointmentId))
+      ? await Appointment.exists({ _id: appointmentId, doctorId: req.user.id, patientId })
+      : null;
+    if (!appt) throw new BadRequestError('That appointment does not belong to this patient');
+    linkedAppointmentId = String(appointmentId);
   }
 
   // Handle attachments (base64)
@@ -39,7 +51,8 @@ export const createPrescription = async (req: AuthRequest, res: Response): Promi
     doctorId: req.user.id,
     patientId,
     opdSessionId,
-    medicines,
+    appointmentId: linkedAppointmentId,
+    medicines: medicines.trim(),
     notes,
     attachments: attachmentUrls,
   });
@@ -63,6 +76,7 @@ export const getPrescriptions = async (req: AuthRequest, res: Response): Promise
   const prescriptions = await Prescription.find({ doctorId: req.user.id })
     .populate('patientId', 'name phone photoUrl')
     .populate('opdSessionId', 'date startTime endTime')
+    .populate('appointmentId', 'date timeSlot type')
     .sort({ createdAt: -1 })
     .lean();
 

@@ -1,5 +1,6 @@
 import type { Response } from 'express';
 import { sanitizeSpecializations } from '../../utils/specializations';
+import { assertStrongPassword } from '../../utils/validation';
 import { Doctor } from '../../models/Doctor';
 import { Clinic } from '../../models/Clinic';
 import type { AuthRequest } from '../../types';
@@ -333,4 +334,25 @@ export const uploadProfilePhoto = async (req: AuthRequest, res: Response): Promi
     message: 'Profile photo updated',
     data: { photoUrl: signedUrl },
   });
+};
+
+/* PUT /api/v1/doctor/profile/password  { currentPassword, newPassword } */
+export const changeDoctorPassword = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+  const { currentPassword, newPassword } = req.body ?? {};
+  if (!currentPassword || !newPassword) throw new BadRequestError('Both current and new password are required');
+  assertStrongPassword(newPassword);
+  if (String(currentPassword) === String(newPassword)) {
+    throw new BadRequestError('New password must be different from the current one');
+  }
+
+  const doctor = await Doctor.findById(req.user.id).select('+password');
+  if (!doctor) throw new NotFoundError('Doctor');
+  if (!(await doctor.comparePassword(String(currentPassword)))) {
+    throw new BadRequestError('Current password is incorrect');
+  }
+
+  doctor.password = String(newPassword);
+  await doctor.save();
+  res.status(200).json({ success: true, message: 'Password changed successfully' });
 };
