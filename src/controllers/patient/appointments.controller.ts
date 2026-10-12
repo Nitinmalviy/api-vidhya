@@ -38,7 +38,14 @@ export const createAppointment = async (req: AuthRequest, res: Response): Promis
     doctorId,
     type: apptType,
     planName: planName || undefined,
-    price: price != null ? Number(price) : undefined,
+    // A consultation always costs the doctor's own fee — never a client-sent
+    // price, which the wallet/Razorpay payment would otherwise charge as-is.
+    price:
+      apptType === 'CONSULTATION'
+        ? doctor.consultationFee ?? undefined
+        : price != null && Number.isFinite(Number(price)) && Number(price) > 0
+          ? Number(price)
+          : undefined,
     date,
     timeSlot,
     notes: notes || undefined,
@@ -56,7 +63,7 @@ export const createAppointment = async (req: AuthRequest, res: Response): Promis
 
   // Confirm to the patient in-app + email both parties (all non-fatal)
   const bookingId = `VC-${String(appointment._id).slice(-8).toUpperCase()}`;
-  const amount = price != null ? Number(price) : (doctor as any).consultationFee ?? 500;
+  const amount = appointment.price ?? (doctor as any).consultationFee ?? 500;
   const doctorName = doctor.name ?? 'Doctor';
   try {
     const patient = await Patient.findById(req.user.id).select('name email').lean();
@@ -85,7 +92,14 @@ export const createAppointment = async (req: AuthRequest, res: Response): Promis
   res.status(201).json({
     success: true,
     message: 'Appointment booked successfully',
-    data: { id: appointment._id, date, timeSlot, status: appointment.status },
+    data: {
+      id: appointment._id,
+      date,
+      timeSlot,
+      status: appointment.status,
+      price: appointment.price ?? null,
+      paymentStatus: appointment.paymentStatus,
+    },
   });
 };
 
