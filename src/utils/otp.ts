@@ -1,8 +1,8 @@
 import crypto from 'crypto';
 import { env } from '../config/env';
 
-export const generateOtp = (): string =>
-  Math.floor(100000 + Math.random() * 900000).toString();
+/** 6-digit code from a CSPRNG — Math.random() is predictable and must not guard logins or resets. */
+export const generateOtp = (): string => crypto.randomInt(100000, 1000000).toString();
 
 export const hashOtp = (otp: string): string =>
   crypto.createHash('sha256').update(String(otp)).digest('hex');
