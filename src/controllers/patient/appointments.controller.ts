@@ -182,11 +182,14 @@ export const cancelAppointment = async (req: AuthRequest, res: Response): Promis
     logger.error({ err, appointmentId: String(appointment._id) }, 'WALLET: refund failed — re-run refundCancelledAppointment');
   }
   const amount = toRupees(refundedPaise);
+  const paidAtClinic = appointment.paymentStatus === 'PAID' && !!appointment.paymentMethod?.startsWith('CLINIC_');
   const refundLine = refundFailed
     ? 'Your refund is being processed and will reach your VidhyaCare wallet shortly.'
     : refundedPaise > 0
       ? `₹${amount.toLocaleString('en-IN')} has been refunded to your VidhyaCare wallet.`
-      : 'No payment was taken for this booking.';
+      : paidAtClinic
+        ? 'You paid at the clinic, so please settle the refund with the clinic.'
+        : 'No payment was taken for this booking.';
 
   // Notify + email the patient (non-fatal)
   try {

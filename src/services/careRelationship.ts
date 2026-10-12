@@ -10,7 +10,7 @@ import { OpdConsultation } from '../models/OpdConsultation';
  */
 export async function doctorPatientIds(doctorId: string): Promise<Types.ObjectId[]> {
   const [fromAppts, fromOpd] = await Promise.all([
-    Appointment.distinct('patientId', { doctorId, status: { $ne: 'CANCELLED' } }),
+    Appointment.distinct('patientId', { doctorId, status: { $ne: 'CANCELLED' }, patientId: { $ne: null } }),
     OpdConsultation.distinct('patientId', { doctorId, status: { $in: ['IN_CALL', 'COMPLETED'] } }),
   ]);
   const seen = new Map<string, Types.ObjectId>();

@@ -148,6 +148,7 @@ export const payAppointmentFromWallet = async (req: AuthRequest, res: Response):
   if (!appt) throw new NotFoundError('Appointment');
   if (appt.paymentStatus === 'PAID') throw new BadRequestError('This appointment is already paid');
   if (appt.status !== 'BOOKED') throw new BadRequestError('Only upcoming appointments can be paid');
+  if (appt.source === 'OFFLINE') throw new BadRequestError('This visit was booked at the clinic — please pay at the clinic.');
 
   // Price comes from the server, never the client.
   const doctor = await Doctor.findById(appt.doctorId).select('consultationFee').lean();

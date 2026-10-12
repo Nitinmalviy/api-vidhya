@@ -6,7 +6,7 @@ import {
   type WalletDirection,
   type WalletEntryKind,
 } from '../models/WalletEntry';
-import { Appointment, type AppointmentPaymentMethod } from '../models/Appointment';
+import { Appointment, ONLINE_PAYMENT_METHODS, type AppointmentPaymentMethod } from '../models/Appointment';
 import { BadRequestError } from '../utils/AppError';
 import { createNotification } from './notification';
 
@@ -181,7 +181,7 @@ export async function settleAppointmentPayment(params: {
   const { appointmentId, patientId, amount, method, session } = params;
 
   const appt = await Appointment.findOneAndUpdate(
-    { _id: appointmentId, patientId, status: 'BOOKED', paymentStatus: { $ne: 'PAID' } },
+    { _id: appointmentId, patientId, status: 'BOOKED', paymentStatus: { $ne: 'PAID' }, source: { $ne: 'OFFLINE' } },
     { paymentStatus: 'PAID', paymentMethod: method, amountPaid: amount, paidAt: new Date() },
     { new: true, session }
   );
@@ -220,6 +220,8 @@ export async function settleAppointmentPayment(params: {
 export async function releaseAppointmentEarning(appointmentId: string): Promise<boolean> {
   const appt = await Appointment.findById(appointmentId).lean();
   if (!appt || appt.paymentStatus !== 'PAID' || !appt.amountPaid) return false;
+  // Fees collected at the clinic never entered the ledger, so there is nothing to release.
+  if (!appt.paymentMethod || !ONLINE_PAYMENT_METHODS.includes(appt.paymentMethod)) return false;
 
   return postOnce(`appt-release:${appointmentId}`, [
     {
@@ -256,11 +258,13 @@ export async function refundCancelledAppointment(appointmentId: string): Promise
   try {
     return await inTransaction(async (session) => {
       const appt = await Appointment.findOneAndUpdate(
-        { _id: appointmentId, status: 'CANCELLED', paymentStatus: 'PAID' },
+        // Only platform payments are refunded to the wallet; cash/UPI taken at the clinic is
+        // settled by the doctor in person.
+        { _id: appointmentId, status: 'CANCELLED', paymentStatus: 'PAID', paymentMethod: { $in: ONLINE_PAYMENT_METHODS } },
         { paymentStatus: 'REFUNDED' },
         { new: true, session }
       );
-      if (!appt || !appt.amountPaid) return 0;
+      if (!appt || !appt.amountPaid || !appt.patientId) return 0;
 
       await post(
         `appt-refund:${appointmentId}`,
@@ -301,7 +305,7 @@ export async function refundCancelledAppointment(appointmentId: string): Promise
 /** Tells both sides a booking is paid. Call after the payment transaction commits. */
 export async function notifyAppointmentPaid(appointmentId: string): Promise<void> {
   const appt = await Appointment.findById(appointmentId).select('patientId doctorId date timeSlot amountPaid paymentMethod').lean();
-  if (!appt?.amountPaid) return;
+  if (!appt?.amountPaid || !appt.patientId) return;
   const amount = `₹${toRupees(appt.amountPaid).toLocaleString('en-IN')}`;
   const via = appt.paymentMethod === 'WALLET' ? 'from your VidhyaCare wallet' : 'via Razorpay';
   await createNotification({

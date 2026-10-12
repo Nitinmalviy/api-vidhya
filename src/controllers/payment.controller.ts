@@ -136,6 +136,10 @@ export const createOrder = async (req: Request, res: Response): Promise<void> =>
         res.status(400).json({ success: false, message: 'This appointment is already paid or no longer payable' });
         return;
       }
+      if (appt.source === 'OFFLINE') {
+        res.status(400).json({ success: false, message: 'This visit was booked at the clinic — please pay at the clinic.' });
+        return;
+      }
       const doctor = await Doctor.findById(appt.doctorId).select('consultationFee').lean();
       const fee = appt.price ?? doctor?.consultationFee;
       if (!fee || fee <= 0) {

@@ -11,6 +11,7 @@ import opdRouter from './opd';
 import prescriptionsRouter from './prescriptions';
 import walletRouter from './wallet';
 import availabilityRouter from './availability';
+import clinicRouter from './clinic';
 
 const router = Router();
 router.get('/health', (_req, res) => {
@@ -28,6 +29,7 @@ router.use('/opd', opdRouter);
 router.use('/prescriptions', prescriptionsRouter);
 router.use('/wallet', walletRouter);
 router.use('/availability', availabilityRouter);
+router.use('/clinic', clinicRouter);
 
 export default router;
 
