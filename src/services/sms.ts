@@ -12,9 +12,12 @@ function provider(): Provider | null {
   return msg91 ? 'msg91' : twilio ? 'twilio' : null;
 }
 
-/** True when OTPs can actually reach a phone (always true in local development, where codes are logged). */
+/** Local machine only: codes are logged instead of texted. Never on Vercel, whatever NODE_ENV says. */
+const localDev = () => env.NODE_ENV === 'development' && !process.env.VERCEL;
+
+/** True when OTPs can actually reach a phone (or are logged on a local dev machine). */
 export function smsEnabled(): boolean {
-  return provider() !== null || env.NODE_ENV === 'development';
+  return provider() !== null || localDev();
 }
 
 async function viaMsg91(e164: string, otp: string) {
@@ -56,7 +59,7 @@ async function viaTwilio(e164: string, otp: string) {
 export async function sendOtpSms(e164: string, otp: string): Promise<void> {
   const p = provider();
   if (!p) {
-    if (env.NODE_ENV === 'development') {
+    if (localDev()) {
       logger.info({ phone: e164, otp }, 'DEV SMS OTP (no SMS gateway configured)');
       return;
     }
