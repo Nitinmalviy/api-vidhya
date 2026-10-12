@@ -8,6 +8,7 @@ import {
 } from '../models/WalletEntry';
 import { Appointment, type AppointmentPaymentMethod } from '../models/Appointment';
 import { BadRequestError } from '../utils/AppError';
+import { createNotification } from './notification';
 
 /**
  * Every rupee that moves between wallets goes through this file.
@@ -295,6 +296,28 @@ export async function refundCancelledAppointment(appointmentId: string): Promise
     if (isDuplicateKey(err)) return 0;
     throw err;
   }
+}
+
+/** Tells both sides a booking is paid. Call after the payment transaction commits. */
+export async function notifyAppointmentPaid(appointmentId: string): Promise<void> {
+  const appt = await Appointment.findById(appointmentId).select('patientId doctorId date timeSlot amountPaid paymentMethod').lean();
+  if (!appt?.amountPaid) return;
+  const amount = `₹${toRupees(appt.amountPaid).toLocaleString('en-IN')}`;
+  const via = appt.paymentMethod === 'WALLET' ? 'from your VidhyaCare wallet' : 'via Razorpay';
+  await createNotification({
+    userId: appt.patientId,
+    role: 'patient',
+    type: 'GENERAL',
+    title: 'Payment successful',
+    message: `${amount} paid ${via} for your appointment on ${apptLabel(appt)}.`,
+  });
+  await createNotification({
+    userId: appt.doctorId,
+    role: 'doctor',
+    type: 'GENERAL',
+    title: 'Booking paid',
+    message: `${amount} received for ${apptLabel(appt)}. It moves to your available balance once you mark the consult complete.`,
+  });
 }
 
 // ── Reads ────────────────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import {
   createOpdSession,
   endConsultation,
   getOpdAccess,
+  getOpdHistory,
   getOpdQueue,
   getOpdSessions,
   requestOpdAccess,
@@ -19,6 +20,9 @@ router.use(authenticate, authorize('doctor'));
 // Admin-granted access to run Live-OPD at all.
 router.get('/access', getOpdAccess);
 router.post('/access/request', requestOpdAccess);
+
+// Past calls — declared before the /:id routes.
+router.get('/history', getOpdHistory);
 
 // Sessions (the doctor's desk).
 router.post('/', createOpdSession);

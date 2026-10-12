@@ -7,6 +7,7 @@ import type { AuthRequest } from '../../types';
 import { BadRequestError, NotFoundError, UnauthorizedError } from '../../utils/AppError';
 import { closeRoom, createCallToken } from '../../services/livekit';
 import { createNotification } from '../../services/notification';
+import { listOpdHistory } from '../../services/opdHistory';
 import {
   assertWithinHourBudget,
   expireStaleRings,
@@ -428,4 +429,18 @@ export const skipConsultation = async (req: AuthRequest, res: Response): Promise
     success: true,
     message: declined ? 'Call declined' : 'Patient marked as missed',
   });
+};
+
+/* GET /api/v1/doctor/opd/history?page=&limit=&status=
+   Every call this doctor has handled or missed, with notes and prescription link. */
+export const getOpdHistory = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+  const data = await listOpdHistory({
+    viewer: 'doctor',
+    userId: req.user.id,
+    page: Number(req.query.page ?? 1),
+    limit: Number(req.query.limit ?? 20),
+    status: req.query.status ? String(req.query.status) : undefined,
+  });
+  res.status(200).json({ success: true, data });
 };

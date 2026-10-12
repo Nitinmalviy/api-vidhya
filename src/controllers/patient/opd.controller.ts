@@ -11,6 +11,7 @@ import type { AuthRequest } from '../../types';
 import { BadRequestError, NotFoundError, UnauthorizedError } from '../../utils/AppError';
 import { closeRoom, createCallToken } from '../../services/livekit';
 import { createNotification } from '../../services/notification';
+import { listOpdHistory } from '../../services/opdHistory';
 import {
   OPD_DOCTOR_FIELDS,
   RING_TIMEOUT_MS,
@@ -310,4 +311,20 @@ export const joinOpdSession = async (req: AuthRequest, res: Response): Promise<v
     message: 'Joined the OPD queue',
     data: { consultationId: String(consultation._id), queuePosition: position },
   });
+};
+
+/* ─────────────────────────────────────────────
+   GET /api/v1/patient/opd/history?page=&limit=&status=
+   Past Live-OPD calls, newest first.
+───────────────────────────────────────────── */
+export const getOpdHistory = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+  const data = await listOpdHistory({
+    viewer: 'patient',
+    userId: req.user.id,
+    page: Number(req.query.page ?? 1),
+    limit: Number(req.query.limit ?? 20),
+    status: req.query.status ? String(req.query.status) : undefined,
+  });
+  res.status(200).json({ success: true, data });
 };

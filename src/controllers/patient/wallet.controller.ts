@@ -10,6 +10,7 @@ import {
   creditTopup,
   getOrCreateWallet,
   inTransaction,
+  notifyAppointmentPaid,
   settleAppointmentPayment,
   toPaise,
   toRupees,
@@ -157,6 +158,7 @@ export const payAppointmentFromWallet = async (req: AuthRequest, res: Response):
   await inTransaction((session) =>
     settleAppointmentPayment({ appointmentId, patientId, amount, method: 'WALLET', session })
   );
+  await notifyAppointmentPaid(appointmentId);
 
   const data = await walletSummary('patient', patientId, 20);
   res.status(200).json({ success: true, message: 'Paid from wallet', data });

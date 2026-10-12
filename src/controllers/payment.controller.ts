@@ -8,7 +8,7 @@ import {
   verifyOrderSignature,
 } from '../config/razorpay';
 import { Doctor } from '../models/Doctor';
-import { inTransaction, postOnce, settleAppointmentPayment, toPaise } from '../services/wallet';
+import { inTransaction, notifyAppointmentPaid, postOnce, settleAppointmentPayment, toPaise } from '../services/wallet';
 import { completeTopup } from './patient/wallet.controller';
 import { Transaction, type ITransaction } from '../models/Transaction';
 import { Patient } from '../models/Patient';
@@ -332,6 +332,7 @@ export const verifyPayment = async (req: Request, res: Response): Promise<void> 
               session,
             })
           );
+          await notifyAppointmentPaid(String(appointmentId));
         } catch (err) {
           // Paid, but the appointment was cancelled or paid another way meanwhile.
           // The money must not vanish: park it in the patient's wallet.

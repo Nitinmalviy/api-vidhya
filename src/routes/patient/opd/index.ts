@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { authenticate, authorize } from '../../../middleware/auth';
 import {
   getMyConsultation,
+  getOpdHistory,
   joinConsultationCall,
   joinOpdSession,
   leaveQueue,
@@ -18,6 +19,7 @@ router.get('/', listOpdSessions);
 // Walk-in flow: one button, routed to whichever doctor is free.
 router.post('/consult', requestConsultation);
 router.get('/my-consultation', getMyConsultation);
+router.get('/history', getOpdHistory);
 router.post('/consultations/:id/join', joinConsultationCall);
 router.delete('/consultations/:id', leaveQueue);
 
