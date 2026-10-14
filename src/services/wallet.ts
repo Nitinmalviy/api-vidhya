@@ -44,7 +44,7 @@ export interface LedgerOp {
   refId?: Types.ObjectId | string;
 }
 
-const isDuplicateKey = (err: unknown): boolean =>
+export const isDuplicateKey = (err: unknown): boolean =>
   typeof err === 'object' && err !== null && (err as { code?: number }).code === 11000;
 
 /** Runs `fn` in a transaction, retrying transient errors as the driver advises. */
@@ -141,25 +141,30 @@ export async function postOnce(key: string, ops: LedgerOp[]): Promise<boolean> {
 
 // ── Patient top-up ───────────────────────────────────────────────────────────
 
-export function creditTopup(params: {
+/** The ledger posting for a top-up. Keyed by order id: one order can only ever credit once. */
+export function topupPosting(params: {
   patientId: string;
   amount: number; // paise
   transactionId: string;
   razorpayOrderId: string;
-}): Promise<boolean> {
-  return postOnce(`topup:${params.razorpayOrderId}`, [
-    {
-      ownerType: 'patient',
-      ownerId: params.patientId,
-      bucket: 'balance',
-      direction: 'CREDIT',
-      amount: params.amount,
-      kind: 'TOPUP',
-      description: 'Added money via Razorpay',
-      refType: 'Transaction',
-      refId: params.transactionId,
-    },
-  ]);
+  razorpayPaymentId?: string;
+}): { key: string; ops: LedgerOp[] } {
+  return {
+    key: `topup:${params.razorpayOrderId}`,
+    ops: [
+      {
+        ownerType: 'patient',
+        ownerId: params.patientId,
+        bucket: 'balance',
+        direction: 'CREDIT',
+        amount: params.amount,
+        kind: 'TOPUP',
+        description: `Added money via Razorpay${params.razorpayPaymentId ? ` · ${params.razorpayPaymentId}` : ''}`,
+        refType: 'Transaction',
+        refId: params.transactionId,
+      },
+    ],
+  };
 }
 
 // ── Appointments ─────────────────────────────────────────────────────────────

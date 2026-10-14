@@ -32,6 +32,7 @@ import ticketsRouter from './tickets.routes';
 import opdRouter from './opd.routes';
 import walkinsRouter from './walkins.routes';
 import teamRouter from './team.routes';
+import walletCheckRouter from './walletCheck.routes';
 
 router.use('/opd', opdRouter);
 router.use('/kyc', kycRouter);
@@ -40,6 +41,7 @@ router.use('/revenue', revenueRouter);
 router.use('/tickets', ticketsRouter);
 router.use('/walkins', walkinsRouter);
 router.use('/team', teamRouter);
+router.use('/wallet-check', walletCheckRouter);
 
 router.get('/patients', authenticate, authorize('admin'), getPatients);
 router.get('/stats/growth', authenticate, authorize('admin'), getGrowthStats);

@@ -7,6 +7,8 @@ export type WalletDirection = 'CREDIT' | 'DEBIT';
 export type WalletEntryKind =
   /** Patient added money through Razorpay. */
   | 'TOPUP'
+  /** Takes back a top-up that was credited more than once for the same payment. */
+  | 'TOPUP_REVERSAL'
   /** Patient paid for an appointment from the wallet. */
   | 'APPOINTMENT_PAYMENT'
   /** Patient refunded for a cancelled, paid appointment. */
@@ -56,6 +58,7 @@ const walletEntrySchema = new Schema<IWalletEntry>(
       type: String,
       enum: [
         'TOPUP',
+        'TOPUP_REVERSAL',
         'APPOINTMENT_PAYMENT',
         'APPOINTMENT_REFUND',
         'CONSULT_EARNING',

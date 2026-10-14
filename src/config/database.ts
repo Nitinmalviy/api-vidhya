@@ -1,6 +1,32 @@
 import mongoose from 'mongoose';
 import { env } from './env';
 import { logger } from '../utils/logger';
+import { WalletEntry } from '../models/WalletEntry';
+import { Transaction } from '../models/Transaction';
+
+/**
+ * The money indexes are what make replays harmless (one ledger entry per
+ * idempotency key, one transaction per Razorpay order). Build them before
+ * serving and shout if they can't be built — usually duplicates already exist.
+ */
+export async function ensureMoneyIndexes(): Promise<boolean> {
+  try {
+    await Promise.all([WalletEntry.createIndexes(), Transaction.createIndexes()]);
+  } catch (err) {
+    logger.error({ err }, 'LEDGER: could not build wallet/transaction indexes — duplicate credits are possible until fixed');
+  }
+  return ledgerIndexOk();
+}
+
+/** True when the unique index on walletentries.idempotencyKey exists. */
+export async function ledgerIndexOk(): Promise<boolean> {
+  try {
+    const indexes = await WalletEntry.collection.indexes();
+    return indexes.some((i) => i.unique && Object.keys(i.key).join() === 'idempotencyKey');
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Drop stale indexes left over from schema migrations.
@@ -31,6 +57,7 @@ export const connectDB = async (): Promise<void> => {
     const conn = await mongoose.connect(env.MONGO_URI);
     logger.info({ host: conn.connection.host }, 'MongoDB connected');
     await dropStaleIndexes();
+    if (!(await ensureMoneyIndexes())) logger.error('LEDGER: unique idempotencyKey index is missing on walletentries');
   } catch (error) {
     logger.error({ error }, 'MongoDB connection failed');
     process.exit(1);
