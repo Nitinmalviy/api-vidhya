@@ -19,6 +19,7 @@ export const verifyDoctor = async (req: Request, res: Response): Promise<void> =
 
   const doctor = await Doctor.findById(id).exec();
   if (!doctor) throw new NotFoundError('Doctor');
+  if (doctor.removedAt) throw new BadRequestError('This doctor account was removed and cannot be approved');
 
   doctor.kycStatus = status;
   doctor.adminRemarks = adminRemarks ?? undefined;

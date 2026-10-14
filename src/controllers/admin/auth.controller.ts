@@ -5,10 +5,19 @@ import { ConflictError, BadRequestError, UnauthorizedError, ForbiddenError } fro
 import { signAccessToken, signRefreshToken } from '../../utils/jwt';
 import { generateRandomToken } from '../../utils/tokens';
 import { sendEmail } from '../../services/email';
+import type { AuthRequest } from '../../types';
+import { assertStrongPassword } from '../../utils/validation';
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   const { name, email, password, role, permissions } = req.body ?? {};
   if (!name || !email || !password) throw new BadRequestError('name, email, password are required');
+
+  // Anyone could previously sign themselves up as an admin (and pick SUPER_ADMIN).
+  const callerId = (req as AuthRequest).user?.id;
+  const caller = callerId ? await Admin.findById(callerId).select('role').lean() : null;
+  if (caller?.role !== 'SUPER_ADMIN') throw new ForbiddenError('Only a super admin can add admins');
+  if (role !== undefined && role !== 'SUPER_ADMIN' && role !== 'MODERATOR') throw new BadRequestError('Invalid role');
+  assertStrongPassword(password);
 
   const existing = await Admin.findOne({ email: String(email).toLowerCase() }).lean().exec();
   if (existing) throw new ConflictError('Admin already exists');
@@ -21,7 +30,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     email,
     password,
     role: role ?? 'MODERATOR',
-    permissions: Array.isArray(permissions) ? permissions : [],
+    permissions: Array.isArray(permissions) ? permissions.map(String).slice(0, 50) : [],
     isEmailVerified: false,
     emailVerificationTokenHash: tokenHash,
     emailVerificationExpires: expires,

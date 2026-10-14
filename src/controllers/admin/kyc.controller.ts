@@ -36,8 +36,9 @@ export const getPendingKYC = async (req: Request, res: Response): Promise<void> 
 export const approveKYC = async (req: Request, res: Response): Promise<void> => {
   try {
     const { id } = req.params;
-    const doctor = await Doctor.findByIdAndUpdate(
-      id,
+    // A removed (test/deactivated) account stays removed.
+    const doctor = await Doctor.findOneAndUpdate(
+      { _id: id, removedAt: null },
       { kycStatus: 'APPROVED', isVerified: true },
       { new: true }
     ).select('-password').lean();
