@@ -19,6 +19,7 @@ import { toIndianMobile } from '../../utils/phone';
 import { doctorPatientIds } from '../../services/careRelationship';
 import { afterStatusChange } from '../../services/appointmentLifecycle';
 import { createNotification } from '../../services/notification';
+import { auditPayment, auditRange, deskActor, loadAudit } from '../../services/paymentAudit';
 
 /* ─────────────────────────────────────────────
    Clinic desk: offline (walk-in / phone) bookings and the day's queue.
@@ -105,6 +106,9 @@ export function serialize(a: IAppointment & { _id: Types.ObjectId; createdAt?: D
       amount: toRupees(a.amountPaid),
       paidAt: a.paidAt ?? null,
       atClinic: !!a.paymentMethod && (CLINIC_PAYMENT_METHODS as readonly string[]).includes(a.paymentMethod),
+      recordedBy: a.paymentRecordedBy
+        ? { kind: a.paymentRecordedBy.kind, name: a.paymentRecordedBy.name, role: a.paymentRecordedBy.role ?? null }
+        : null,
     },
   };
 }
@@ -325,6 +329,7 @@ export const createClinicBooking = async (req: AuthRequest, res: Response): Prom
   const linked = await findLinkedPatient(doctorId, phone);
 
   const now = new Date();
+  const actor = body.payment ? await deskActor(req) : null;
   let appt;
   try {
     appt = await Appointment.create({
@@ -344,12 +349,17 @@ export const createClinicBooking = async (req: AuthRequest, res: Response): Prom
         paymentMethod: body.payment.method,
         amountPaid: toPaise(body.payment.amount),
         paidAt: now,
+        paymentRecordedBy: actor!,
       }),
     });
   } catch (err) {
     // The app (or another desk) took this slot a moment ago.
     if (isSlotTaken(err)) throw new ConflictError('That slot was just booked. Pick another time.');
     throw err;
+  }
+
+  if (body.payment && actor) {
+    await auditPayment(appt, actor, { event: 'RECORDED', method: body.payment.method, amount: toPaise(body.payment.amount) });
   }
 
   if (linked) {
@@ -474,7 +484,18 @@ export const updateVisit = async (req: AuthRequest, res: Response): Promise<void
   }
   if (!appt) throw new ConflictError('This visit was just updated — refresh and try again');
 
-  if (action === 'COMPLETE' || action === 'CANCEL') await afterStatusChange(appt as never);
+  if (action === 'COMPLETE' || action === 'CANCEL') {
+    const refunded = await afterStatusChange(appt as never);
+    // A paid visit was cancelled: note who did it and what went back to the patient.
+    if (action === 'CANCEL' && current.paymentStatus === 'PAID') {
+      await auditPayment(current, await deskActor(req), {
+        event: 'CANCELLED_PAID',
+        method: current.paymentMethod,
+        amount: current.amountPaid ?? 0,
+        refunded,
+      });
+    }
+  }
 
   const doctor = await Doctor.findById(deskDoctor(req)).select('consultationFee').lean();
   res.status(200).json({ success: true, data: { visit: serialize(appt as never, doctor?.consultationFee) } });
@@ -490,6 +511,7 @@ export const recordClinicPayment = async (req: AuthRequest, res: Response): Prom
   if (!req.user) throw new UnauthorizedError();
   if (!Types.ObjectId.isValid(req.params.id)) throw new NotFoundError('Visit');
   const { method, amount } = req.body as z.infer<typeof clinicPaymentSchema>;
+  const actor = await deskActor(req);
 
   const appt = await Appointment.findOneAndUpdate(
     {
@@ -499,12 +521,21 @@ export const recordClinicPayment = async (req: AuthRequest, res: Response): Prom
       status: { $in: ['BOOKED', 'COMPLETED'] },
       paymentStatus: 'UNPAID',
     },
-    { $set: { paymentStatus: 'PAID', paymentMethod: method, amountPaid: toPaise(amount), paidAt: new Date() } },
+    {
+      $set: {
+        paymentStatus: 'PAID',
+        paymentMethod: method,
+        amountPaid: toPaise(amount),
+        paidAt: new Date(),
+        paymentRecordedBy: actor,
+      },
+    },
     { new: true }
   )
     .populate('patientId', 'name phone gender dateOfBirth')
     .lean();
   if (!appt) throw new BadRequestError('This visit is already paid or closed');
+  await auditPayment(appt, actor, { event: 'RECORDED', method, amount: toPaise(amount) });
 
   const doctor = await Doctor.findById(deskDoctor(req)).select('consultationFee').lean();
   res.status(200).json({ success: true, message: 'Payment recorded', data: { visit: serialize(appt as never, doctor?.consultationFee) } });
@@ -515,15 +546,21 @@ export const undoClinicPayment = async (req: AuthRequest, res: Response): Promis
   if (!req.user) throw new UnauthorizedError();
   if (!Types.ObjectId.isValid(req.params.id)) throw new NotFoundError('Visit');
 
+  // Only desk payments: platform payments are undone by cancelling (which refunds).
+  const filter = { _id: req.params.id, doctorId: deskDoctor(req), paymentStatus: 'PAID', paymentMethod: { $in: CLINIC_PAYMENT_METHODS } };
+  const before = await Appointment.findOne(filter).select('paymentMethod amountPaid').lean();
+  if (!before) throw new BadRequestError('No clinic payment to undo on this visit');
+
+  // Match the amount we read, so the trail records exactly what was removed.
   const appt = await Appointment.findOneAndUpdate(
-    // Only desk payments: platform payments are undone by cancelling (which refunds).
-    { _id: req.params.id, doctorId: deskDoctor(req), paymentStatus: 'PAID', paymentMethod: { $in: CLINIC_PAYMENT_METHODS } },
-    { $set: { paymentStatus: 'UNPAID' }, $unset: { paymentMethod: 1, amountPaid: 1, paidAt: 1 } },
+    { ...filter, paymentMethod: before.paymentMethod, amountPaid: before.amountPaid },
+    { $set: { paymentStatus: 'UNPAID' }, $unset: { paymentMethod: 1, amountPaid: 1, paidAt: 1, paymentRecordedBy: 1 } },
     { new: true }
   )
     .populate('patientId', 'name phone gender dateOfBirth')
     .lean();
-  if (!appt) throw new BadRequestError('No clinic payment to undo on this visit');
+  if (!appt) throw new ConflictError('This payment was just changed — refresh and try again');
+  await auditPayment(appt, await deskActor(req), { event: 'UNDONE', method: before.paymentMethod, amount: before.amountPaid ?? 0 });
 
   const doctor = await Doctor.findById(deskDoctor(req)).select('consultationFee').lean();
   res.status(200).json({ success: true, message: 'Payment removed', data: { visit: serialize(appt as never, doctor?.consultationFee) } });
@@ -637,4 +674,17 @@ export const editClinicVisit = async (req: AuthRequest, res: Response): Promise<
 
   const doctor = await Doctor.findById(req.user.id).select('consultationFee').lean();
   res.status(200).json({ success: true, message: 'Details saved', data: { visit: serialize(appt as never, doctor?.consultationFee) } });
+};
+
+/* GET /api/v1/doctor/clinic/audit?from=&to= — the payment trail for this doctor's visits. */
+export const getPaymentAudit = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+  let range;
+  try {
+    range = auditRange(req.query, nowInIndia().date);
+  } catch (err) {
+    throw new BadRequestError((err as Error).message);
+  }
+  const audit = await loadAudit([req.user.id], range.start, range.end);
+  res.status(200).json({ success: true, data: { from: range.from, to: range.to, ...audit } });
 };

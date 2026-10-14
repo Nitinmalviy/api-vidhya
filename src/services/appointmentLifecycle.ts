@@ -9,7 +9,8 @@ type Appt = Pick<IAppointment, 'status' | 'paymentStatus' | 'patientId' | 'date'
  * Money side of a status change. Safe to call for clinic-paid visits too:
  * the wallet functions ignore anything not paid on the platform.
  */
-export async function afterStatusChange(appt: Appt): Promise<void> {
+/** Returns the paise refunded to the patient's wallet (0 when nothing was refunded). */
+export async function afterStatusChange(appt: Appt): Promise<number> {
   const id = String(appt._id);
   if (appt.status === 'COMPLETED' && appt.paymentStatus === 'PAID') {
     try {
@@ -34,5 +35,7 @@ export async function afterStatusChange(appt: Appt): Promise<void> {
         message: `Your appointment on ${appt.date} at ${appt.timeSlot} was cancelled. ₹${toRupees(refunded).toLocaleString('en-IN')} has been refunded to your VidhyaCare wallet.`,
       }).catch((err) => logger.warn({ err }, 'Doctor-cancel refund notification failed'));
     }
+    return refunded;
   }
+  return 0;
 }

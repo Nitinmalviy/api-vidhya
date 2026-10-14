@@ -6,6 +6,7 @@ import { Clinic } from '../../models/Clinic';
 import { Doctor } from '../../models/Doctor';
 import { type AdminRequest, deskScope, doctorIdsForClinics } from '../../middleware/adminAccess';
 import { BadRequestError, ForbiddenError, NotFoundError } from '../../utils/AppError';
+import { auditRange, loadAudit } from '../../services/paymentAudit';
 import { nowInIndia } from '../../utils/availability';
 import {
   STAGE_ORDER,
@@ -194,4 +195,31 @@ export const loadWalkinDesk = async (req: AdminRequest, _res: Response, next: Ne
 
   Object.assign(req as DeskRequest, { deskDoctorId: String(visit.doctorId), deskBy: 'admin' });
   next();
+};
+
+/**
+ * GET /api/v1/admin/walkins/audit?from=&to=&clinicId=&doctorId=
+ * Who recorded, undid or refunded money at the desk — limited to the admin's clinics.
+ */
+export const listPaymentAudit = async (req: AdminRequest, res: Response): Promise<void> => {
+  let range;
+  try {
+    range = auditRange(req.query, nowInIndia().date);
+  } catch (err) {
+    throw new BadRequestError((err as Error).message);
+  }
+  const doctorId = String(req.query.doctorId ?? '');
+  const clinicId = String(req.query.clinicId ?? '');
+  if (doctorId && !Types.ObjectId.isValid(doctorId)) throw new BadRequestError('Invalid doctor');
+  if (clinicId && !Types.ObjectId.isValid(clinicId)) throw new BadRequestError('Invalid clinic');
+
+  let allowed = await deskScope(req);
+  if (clinicId) {
+    const atClinic = await doctorIdsForClinics([clinicId]);
+    allowed = allowed ? allowed.filter((id) => atClinic.includes(id)) : atClinic;
+  }
+  if (doctorId) allowed = !allowed || allowed.includes(doctorId) ? [doctorId] : [];
+
+  const audit = await loadAudit(allowed, range.start, range.end);
+  res.status(200).json({ success: true, data: { from: range.from, to: range.to, ...audit } });
 };

@@ -50,6 +50,8 @@ export interface IAppointment {
   paymentMethod?: AppointmentPaymentMethod;
   amountPaid?: number;
   paidAt?: Date;
+  /** Who entered a desk (CLINIC_*) payment. The full history is in PaymentAudit. */
+  paymentRecordedBy?: { kind: 'doctor' | 'admin'; id: Types.ObjectId; name: string; role?: string };
 }
 
 const appointmentSchema = new Schema<IAppointment>(
@@ -90,6 +92,18 @@ const appointmentSchema = new Schema<IAppointment>(
     paymentMethod: { type: String, enum: ['WALLET', 'RAZORPAY', 'CLINIC_CASH', 'CLINIC_UPI', 'CLINIC_CARD'] },
     amountPaid: { type: Number, min: 0 },
     paidAt: { type: Date },
+    paymentRecordedBy: {
+      type: new Schema(
+        {
+          kind: { type: String, enum: ['doctor', 'admin'], required: true },
+          id: { type: Schema.Types.ObjectId, required: true },
+          name: { type: String, required: true },
+          role: { type: String },
+        },
+        { _id: false }
+      ),
+      required: false,
+    },
   },
   { timestamps: true }
 );

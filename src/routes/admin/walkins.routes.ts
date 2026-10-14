@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import {
   adminWalkinSchema,
+  listPaymentAudit,
   listWalkinDoctors,
   listWalkins,
   loadWalkinDesk,
@@ -23,6 +24,7 @@ router.use(authenticate, authorize('admin'));
 
 router.get('/', listWalkins);
 router.get('/doctors', listWalkinDoctors);
+router.get('/audit', listPaymentAudit);
 router.post('/', validate(adminWalkinSchema), prepareWalkin, createClinicBooking);
 router.patch('/:id/visit', validate(visitActionSchema), loadWalkinDesk, updateVisit);
 router.post('/:id/payment', validate(clinicPaymentSchema), loadWalkinDesk, recordClinicPayment);

@@ -1,3 +1,4 @@
+import { auditPayment, deskActor } from '../../services/paymentAudit';
 import type { Response } from 'express';
 import { Appointment, isSlotTaken } from '../../models/Appointment';
 import type { AuthRequest } from '../../types';
@@ -50,7 +51,15 @@ export const updateAppointmentStatus = async (req: AuthRequest, res: Response): 
   }
   if (!appt) throw new BadRequestError('Appointment was updated by someone else — refresh and try again');
 
-  await afterStatusChange(appt);
+  const refunded = await afterStatusChange(appt);
+  if (appt.status === 'CANCELLED' && current.paymentStatus === 'PAID') {
+    await auditPayment(current, await deskActor(req), {
+      event: 'CANCELLED_PAID',
+      method: current.paymentMethod,
+      amount: current.amountPaid ?? 0,
+      refunded,
+    });
+  }
 
   res.status(200).json({ success: true, message: 'Appointment updated', data: { status: appt.status } });
 };

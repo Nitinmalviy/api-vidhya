@@ -7,7 +7,7 @@ import type { AuthRequest } from '../types';
 import { ForbiddenError, UnauthorizedError } from '../utils/AppError';
 import { verifyAccessToken } from '../utils/jwt';
 
-export type AdminAccess = { id: string; role: AdminRole; clinicIds: string[] };
+export type AdminAccess = { id: string; name: string; role: AdminRole; clinicIds: string[] };
 export type AdminRequest = AuthRequest & { admin?: AdminAccess };
 
 /** What a front-desk account may open. Everything else in the admin API is off limits. */
@@ -34,10 +34,10 @@ export const adminAccess = async (req: AdminRequest, _res: Response, next: NextF
   }
   if (payload.role !== 'admin') return next();
 
-  const admin = await Admin.findById(payload.id).select('role clinicIds').lean();
+  const admin = await Admin.findById(payload.id).select('name role clinicIds').lean();
   if (!admin) throw new UnauthorizedError('This admin account no longer exists');
 
-  req.admin = { id: String(admin._id), role: admin.role, clinicIds: (admin.clinicIds ?? []).map(String) };
+  req.admin = { id: String(admin._id), name: admin.name, role: admin.role, clinicIds: (admin.clinicIds ?? []).map(String) };
   if (admin.role === 'FRONT_DESK' && !FRONT_DESK_PATHS.test(req.path)) {
     throw new ForbiddenError('Front desk accounts can only use the walk-in desk');
   }

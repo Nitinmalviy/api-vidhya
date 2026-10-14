@@ -4,6 +4,7 @@ import {
   createClinicBooking,
   createClinicBookingSchema,
   getClinicDay,
+  getPaymentAudit,
   getClinicSlots,
   lookupClinicPatient,
   recordClinicPayment,
@@ -25,6 +26,7 @@ router.use(authenticate, authorize('doctor'));
 router.get('/day', getClinicDay);
 router.get('/slots', getClinicSlots);
 router.get('/lookup', lookupClinicPatient);
+router.get('/audit', getPaymentAudit);
 router.post('/bookings', validate(createClinicBookingSchema), createClinicBooking);
 router.patch('/bookings/:id/visit', validate(visitActionSchema), updateVisit);
 router.patch('/bookings/:id/reschedule', validate(rescheduleSchema), rescheduleVisit);
