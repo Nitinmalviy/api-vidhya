@@ -1,11 +1,12 @@
 import app from './app';
 import { env } from './config/env';
 import { connectDB } from './config/database';
-import { runtimeSeed } from './scripts/runtime-seed';
+import { backfillSlotHolds, runtimeSeed } from './scripts/runtime-seed';
 import { logger } from './utils/logger';
 
 connectDB()
   .then(() => runtimeSeed())
+  .then(() => backfillSlotHolds())
   .catch((err: Error) => logger.error({ err }, 'DB connection failed'));
 
 if (!process.env.VERCEL) {

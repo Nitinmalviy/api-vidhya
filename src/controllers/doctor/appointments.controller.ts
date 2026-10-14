@@ -1,5 +1,5 @@
 import type { Response } from 'express';
-import { Appointment } from '../../models/Appointment';
+import { Appointment, isSlotTaken } from '../../models/Appointment';
 import type { AuthRequest } from '../../types';
 import { BadRequestError, NotFoundError, UnauthorizedError } from '../../utils/AppError';
 import { afterStatusChange } from '../../services/appointmentLifecycle';
@@ -41,11 +41,13 @@ export const updateAppointmentStatus = async (req: AuthRequest, res: Response): 
     throw new BadRequestError('A paid appointment cannot be changed after it is completed or cancelled');
   }
 
-  const appt = await Appointment.findOneAndUpdate(
-    { _id: current._id, status: current.status },
-    { status },
-    { new: true }
-  ).lean();
+  let appt;
+  try {
+    appt = await Appointment.findOneAndUpdate({ _id: current._id, status: current.status }, { status }, { new: true }).lean();
+  } catch (err) {
+    if (isSlotTaken(err)) throw new BadRequestError('Another booking already holds this slot, so it cannot be reopened.');
+    throw err;
+  }
   if (!appt) throw new BadRequestError('Appointment was updated by someone else — refresh and try again');
 
   await afterStatusChange(appt);

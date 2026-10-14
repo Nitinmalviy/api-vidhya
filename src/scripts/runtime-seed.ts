@@ -1,6 +1,7 @@
 import { Doctor } from '../models/Doctor';
 import { Review } from '../models/Review';
 import { logger } from '../utils/logger';
+import { Appointment, WALK_IN_SLOT } from '../models/Appointment';
 
 /**
  * Idempotent startup seeding so doctor cards and detail pages always have
@@ -101,5 +102,36 @@ export async function runtimeSeed(): Promise<void> {
     }
   } catch (err) {
     logger.error({ err }, 'Runtime seed failed (non-fatal)');
+  }
+}
+
+/**
+ * Marks bookings made before slot locking as slot-holders so the unique index
+ * protects them too. Closed bookings are flagged in bulk; active ones one by one,
+ * so a double booking that already existed is logged and skipped instead of
+ * failing the whole run. Cheap once done: the query then matches nothing.
+ */
+export async function backfillSlotHolds(): Promise<void> {
+  const base = { holdsSlot: { $exists: false } };
+  try {
+    // The unique slot index must exist first, or two old double bookings could both be
+    // flagged and then the index itself would fail to build.
+    await Appointment.init();
+    await Appointment.updateMany(
+      { ...base, status: { $ne: 'BOOKED' }, type: { $ne: 'OPD' }, timeSlot: { $ne: WALK_IN_SLOT } },
+      { $set: { holdsSlot: true } }
+    );
+    await Appointment.updateMany({ ...base, $or: [{ type: 'OPD' }, { timeSlot: WALK_IN_SLOT }] }, { $set: { holdsSlot: false } });
+    const active = await Appointment.find({ ...base, status: 'BOOKED' }).select('_id').limit(2000).lean();
+    for (const a of active) {
+      try {
+        await Appointment.updateOne({ _id: a._id }, { $set: { holdsSlot: true } });
+      } catch (err) {
+        logger.warn({ err, appointmentId: String(a._id) }, 'Existing double booking — left unlocked for the doctor to resolve');
+        await Appointment.updateOne({ _id: a._id }, { $set: { holdsSlot: false } });
+      }
+    }
+  } catch (err) {
+    logger.error({ err }, 'Slot-hold backfill failed');
   }
 }

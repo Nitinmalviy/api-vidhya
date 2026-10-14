@@ -1,6 +1,6 @@
 import type { Response } from 'express';
 import PDFDocument from 'pdfkit';
-import { Appointment } from '../../models/Appointment';
+import { Appointment, isSlotTaken } from '../../models/Appointment';
 import { Doctor } from '../../models/Doctor';
 import { Patient } from '../../models/Patient';
 import type { AuthRequest } from '../../types';
@@ -42,24 +42,31 @@ export const createAppointment = async (req: AuthRequest, res: Response): Promis
   }).lean();
   if (clash) throw new BadRequestError('This time slot is already booked. Please pick another.');
 
-  const appointment = await Appointment.create({
-    patientId: req.user.id,
-    doctorId,
-    type: apptType,
-    planName: planName || undefined,
-    // A consultation always costs the doctor's own fee — never a client-sent
-    // price, which the wallet/Razorpay payment would otherwise charge as-is.
-    price:
-      apptType === 'CONSULTATION'
-        ? doctor.consultationFee ?? undefined
-        : price != null && Number.isFinite(Number(price)) && Number(price) > 0
-          ? Number(price)
-          : undefined,
-    date,
-    timeSlot,
-    notes: notes || undefined,
-    status: 'BOOKED',
-  });
+  let appointment;
+  try {
+    appointment = await Appointment.create({
+      patientId: req.user.id,
+      doctorId,
+      type: apptType,
+      planName: planName || undefined,
+      // A consultation always costs the doctor's own fee — never a client-sent
+      // price, which the wallet/Razorpay payment would otherwise charge as-is.
+      price:
+        apptType === 'CONSULTATION'
+          ? doctor.consultationFee ?? undefined
+          : price != null && Number.isFinite(Number(price)) && Number(price) > 0
+            ? Number(price)
+            : undefined,
+      date,
+      timeSlot,
+      notes: notes || undefined,
+      status: 'BOOKED',
+    });
+  } catch (err) {
+    // Someone (app or clinic desk) took the slot between the check above and this write.
+    if (isSlotTaken(err)) throw new BadRequestError('This time slot was just booked. Please pick another.');
+    throw err;
+  }
 
   // Notify the doctor in-app
   await createNotification({

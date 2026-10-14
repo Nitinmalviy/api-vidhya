@@ -6,6 +6,7 @@ import {
   CLINIC_PAYMENT_METHODS,
   ONLINE_PAYMENT_METHODS,
   WALK_IN_SLOT,
+  isSlotTaken,
   type IAppointment,
 } from '../../models/Appointment';
 import { ClinicCounter } from '../../models/ClinicCounter';
@@ -121,16 +122,44 @@ async function nextToken(doctorId: string, date: string): Promise<number> {
   return doc!.seq;
 }
 
-/** Slots a doctor can hand out at the desk: their weekly hours, minus booked and already-past ones. */
-async function clinicFreeSlots(doctorId: string, date: string): Promise<string[]> {
+type SlotState = 'free' | 'app' | 'clinic' | 'past';
+export type SlotCell = { slot: string; state: SlotState; name?: string };
+
+/**
+ * Every slot of the doctor's weekly hours for a date and who holds it, so the
+ * desk can see why a time isn't free. Online booking can still be paused or the
+ * day blocked — the desk books regardless; that's the doctor's call.
+ * `ignoreId` leaves out one booking (the one being rescheduled).
+ */
+async function clinicSlotGrid(doctorId: string, date: string, ignoreId?: string): Promise<SlotCell[]> {
   const doctor = await Doctor.findById(doctorId).select('availability').lean();
   if (!doctor) throw new NotFoundError('Doctor');
-  // The desk can book even while online booking is paused or the day is blocked — it's the doctor's call.
   const a = { ...effectiveAvailability(doctor.availability), accepting: true, blockedDates: [] as string[] };
-  const booked = await Appointment.find({ doctorId, date, status: 'BOOKED' }).select('timeSlot').lean();
-  const taken = new Set(booked.map((b) => b.timeSlot));
+  const booked = await Appointment.find({
+    doctorId,
+    date,
+    status: 'BOOKED',
+    timeSlot: { $ne: WALK_IN_SLOT },
+    ...(ignoreId && { _id: { $ne: ignoreId } }),
+  })
+    .select('timeSlot source guest patientId')
+    .populate('patientId', 'name')
+    .lean();
+  const holder = new Map(booked.map((b) => [b.timeSlot, b]));
   const now = nowInIndia();
-  return offeredSlots(a, date).filter((s) => !taken.has(s) && (date !== now.date || slotMinutes(s) >= now.minutes - 15));
+  return offeredSlots(a, date).map((slot) => {
+    const b = holder.get(slot);
+    if (b) {
+      const p = b.patientId as unknown as { name?: string } | null;
+      return { slot, state: b.source === 'OFFLINE' ? 'clinic' : 'app', name: b.guest?.name ?? p?.name ?? undefined };
+    }
+    if (date === now.date && slotMinutes(slot) < now.minutes - 15) return { slot, state: 'past' };
+    return { slot, state: 'free' };
+  });
+}
+
+async function clinicFreeSlots(doctorId: string, date: string, ignoreId?: string): Promise<string[]> {
+  return (await clinicSlotGrid(doctorId, date, ignoreId)).filter((c) => c.state === 'free').map((c) => c.slot);
 }
 
 /** A registered patient with this phone, but only one who is already this doctor's patient. */
@@ -202,7 +231,11 @@ export const getClinicSlots = async (req: AuthRequest, res: Response): Promise<v
   if (!req.user) throw new UnauthorizedError();
   const date = String(req.query.date ?? '');
   if (!DATE_RE.test(date)) throw new BadRequestError('date must be YYYY-MM-DD');
-  res.status(200).json({ success: true, data: { date, slots: await clinicFreeSlots(req.user.id, date) } });
+  const grid = await clinicSlotGrid(req.user.id, date);
+  res.status(200).json({
+    success: true,
+    data: { date, slots: grid.filter((c) => c.state === 'free').map((c) => c.slot), grid },
+  });
 };
 
 /* ─────────────────────────────────────────────
@@ -285,25 +318,32 @@ export const createClinicBooking = async (req: AuthRequest, res: Response): Prom
   const linked = await findLinkedPatient(doctorId, phone);
 
   const now = new Date();
-  const appt = await Appointment.create({
-    doctorId,
-    patientId: linked?._id,
-    source: 'OFFLINE',
-    guest: { name: body.name, phone, age: body.age, gender: body.gender },
-    type: body.type,
-    price: fee,
-    date: body.date,
-    timeSlot: walkIn ? WALK_IN_SLOT : body.timeSlot,
-    notes: body.reason || undefined,
-    status: 'BOOKED',
-    ...(walkIn && { checkedInAt: now, token: await nextToken(doctorId, body.date) }),
-    ...(body.payment && {
-      paymentStatus: 'PAID',
-      paymentMethod: body.payment.method,
-      amountPaid: toPaise(body.payment.amount),
-      paidAt: now,
-    }),
-  });
+  let appt;
+  try {
+    appt = await Appointment.create({
+      doctorId,
+      patientId: linked?._id,
+      source: 'OFFLINE',
+      guest: { name: body.name, phone, age: body.age, gender: body.gender },
+      type: body.type,
+      price: fee,
+      date: body.date,
+      timeSlot: walkIn ? WALK_IN_SLOT : body.timeSlot,
+      notes: body.reason || undefined,
+      status: 'BOOKED',
+      ...(walkIn && { checkedInAt: now, token: await nextToken(doctorId, body.date) }),
+      ...(body.payment && {
+        paymentStatus: 'PAID',
+        paymentMethod: body.payment.method,
+        amountPaid: toPaise(body.payment.amount),
+        paidAt: now,
+      }),
+    });
+  } catch (err) {
+    // The app (or another desk) took this slot a moment ago.
+    if (isSlotTaken(err)) throw new ConflictError('That slot was just booked. Pick another time.');
+    throw err;
+  }
 
   if (linked) {
     await createNotification({
@@ -406,9 +446,15 @@ export const updateVisit = async (req: AuthRequest, res: Response): Promise<void
   if (Object.keys(unset).length) update.$unset = unset;
 
   // Matching on the status we read means two taps (or two staff) can't both apply.
-  const appt = await Appointment.findOneAndUpdate({ _id: current._id, status: current.status }, update, { new: true })
-    .populate('patientId', 'name phone gender dateOfBirth')
-    .lean();
+  let appt;
+  try {
+    appt = await Appointment.findOneAndUpdate({ _id: current._id, status: current.status }, update, { new: true })
+      .populate('patientId', 'name phone gender dateOfBirth')
+      .lean();
+  } catch (err) {
+    if (isSlotTaken(err)) throw new ConflictError('Someone else has this slot now. Book the patient again as a walk-in.');
+    throw err;
+  }
   if (!appt) throw new ConflictError('This visit was just updated — refresh and try again');
 
   if (action === 'COMPLETE' || action === 'CANCEL') await afterStatusChange(appt as never);
@@ -464,4 +510,114 @@ export const undoClinicPayment = async (req: AuthRequest, res: Response): Promis
 
   const doctor = await Doctor.findById(req.user.id).select('consultationFee').lean();
   res.status(200).json({ success: true, message: 'Payment removed', data: { visit: serialize(appt as never, doctor?.consultationFee) } });
+};
+
+export const rescheduleSchema = z.object({
+  date: z.string().regex(DATE_RE, 'date must be YYYY-MM-DD'),
+  timeSlot: z.string().trim().min(4).max(20),
+});
+
+/* ─────────────────────────────────────────────
+   PATCH /api/v1/doctor/clinic/bookings/:id/reschedule  { date, timeSlot }
+   Moves an app or clinic booking (or turns a walk-in that hasn't arrived into a
+   slot booking). The unique slot index is the final word if two people grab the
+   same slot at once.
+───────────────────────────────────────────── */
+export const rescheduleVisit = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+  if (!Types.ObjectId.isValid(req.params.id)) throw new NotFoundError('Visit');
+  const { date, timeSlot } = req.body as z.infer<typeof rescheduleSchema>;
+
+  const current = await Appointment.findOne({ _id: req.params.id, doctorId: req.user.id, type: { $ne: 'OPD' } }).lean();
+  if (!current) throw new NotFoundError('Visit');
+  if (current.status !== 'BOOKED') throw new BadRequestError('Only upcoming visits can be moved');
+  if (current.checkedInAt) throw new BadRequestError('This patient is already checked in. Finish or cancel the visit instead.');
+  if (current.date === date && current.timeSlot === timeSlot) throw new BadRequestError('Pick a different time');
+
+  const ahead = daysBetween(nowInIndia().date, date);
+  if (ahead < 0) throw new BadRequestError('Pick today or a future date');
+  if (ahead > MAX_DAYS_AHEAD) throw new BadRequestError(`Visits can be moved up to ${MAX_DAYS_AHEAD} days ahead`);
+  if (!(await clinicFreeSlots(req.user.id, date, String(current._id))).includes(timeSlot)) {
+    throw new ConflictError('That slot is not free. Pick another time.');
+  }
+
+  let appt;
+  try {
+    appt = await Appointment.findOneAndUpdate(
+      { _id: current._id, status: 'BOOKED', date: current.date, timeSlot: current.timeSlot },
+      { $set: { date, timeSlot, holdsSlot: true }, $unset: { token: 1 } },
+      { new: true }
+    )
+      .populate('patientId', 'name phone gender dateOfBirth')
+      .lean();
+  } catch (err) {
+    if (isSlotTaken(err)) throw new ConflictError('That slot was just booked. Pick another time.');
+    throw err;
+  }
+  if (!appt) throw new ConflictError('This visit was just updated — refresh and try again');
+
+  const patientId = current.patientId ? String(current.patientId) : null;
+  if (patientId) {
+    const doctor = await Doctor.findById(req.user.id).select('name').lean();
+    await createNotification({
+      userId: patientId,
+      role: 'patient',
+      type: 'GENERAL',
+      title: 'Appointment rescheduled',
+      message: `${doctor?.name ?? 'Your doctor'} moved your visit from ${current.date}, ${current.timeSlot} to ${date}, ${timeSlot}. Cancel from Appointments if the new time doesn't suit you.`,
+    }).catch(() => undefined);
+  }
+
+  const doctor = await Doctor.findById(req.user.id).select('consultationFee').lean();
+  res.status(200).json({
+    success: true,
+    message: patientId ? 'Visit moved — the patient has been notified' : 'Visit moved',
+    data: { visit: serialize(appt as never, doctor?.consultationFee) },
+  });
+};
+
+export const editVisitSchema = z
+  .object({
+    name: z.string().trim().min(2).max(80).optional(),
+    age: z.coerce.number().int().min(0).max(120).nullable().optional(),
+    gender: z.enum(['MALE', 'FEMALE', 'OTHER']).nullable().optional(),
+    reason: z.string().trim().max(300).optional(),
+    fee: z.coerce.number().min(0).max(100000).optional(),
+  })
+  .refine((v) => Object.keys(v).length > 0, 'Nothing to update');
+
+/* ─────────────────────────────────────────────
+   PATCH /api/v1/doctor/clinic/bookings/:id  — fix details of a clinic booking.
+   App bookings belong to the patient's account, so only clinic ones are editable.
+───────────────────────────────────────────── */
+export const editClinicVisit = async (req: AuthRequest, res: Response): Promise<void> => {
+  if (!req.user) throw new UnauthorizedError();
+  if (!Types.ObjectId.isValid(req.params.id)) throw new NotFoundError('Visit');
+  const body = req.body as z.infer<typeof editVisitSchema>;
+
+  const current = await Appointment.findOne({ _id: req.params.id, doctorId: req.user.id, source: 'OFFLINE' }).lean();
+  if (!current) throw new NotFoundError('Clinic visit');
+  if (body.fee !== undefined && current.paymentStatus !== 'UNPAID') {
+    throw new BadRequestError('The fee is already collected. Undo the payment first to change it.');
+  }
+
+  const set: Record<string, unknown> = {};
+  const unset: Record<string, 1> = {};
+  if (body.name !== undefined) set['guest.name'] = body.name;
+  if (body.age !== undefined) body.age === null ? (unset['guest.age'] = 1) : (set['guest.age'] = body.age);
+  if (body.gender !== undefined) body.gender === null ? (unset['guest.gender'] = 1) : (set['guest.gender'] = body.gender);
+  if (body.reason !== undefined) body.reason ? (set.notes = body.reason) : (unset.notes = 1);
+  if (body.fee !== undefined) set.price = body.fee;
+
+  const appt = await Appointment.findOneAndUpdate(
+    { _id: current._id },
+    { ...(Object.keys(set).length && { $set: set }), ...(Object.keys(unset).length && { $unset: unset }) },
+    { new: true, runValidators: true }
+  )
+    .populate('patientId', 'name phone gender dateOfBirth')
+    .lean();
+  if (!appt) throw new NotFoundError('Clinic visit');
+
+  const doctor = await Doctor.findById(req.user.id).select('consultationFee').lean();
+  res.status(200).json({ success: true, message: 'Details saved', data: { visit: serialize(appt as never, doctor?.consultationFee) } });
 };

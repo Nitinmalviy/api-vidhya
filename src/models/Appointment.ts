@@ -24,6 +24,12 @@ export interface IAppointment {
   guest?: { name: string; phone: string; age?: number; gender?: 'MALE' | 'FEMALE' | 'OTHER' };
   /** Clinic queue number for the day, given at check-in. */
   token?: number;
+  /**
+   * True when this booking occupies a bookable time slot (app or clinic slot
+   * bookings). Walk-ins and Live OPD calls don't. The unique index below lets
+   * only one BOOKED slot-holder exist per doctor, date and time.
+   */
+  holdsSlot?: boolean;
   checkedInAt?: Date;
   consultStartedAt?: Date;
   completedAt?: Date;
@@ -67,6 +73,7 @@ const appointmentSchema = new Schema<IAppointment>(
       _id: false,
     },
     token: { type: Number, min: 1 },
+    holdsSlot: { type: Boolean },
     checkedInAt: { type: Date },
     consultStartedAt: { type: Date },
     completedAt: { type: Date },
@@ -88,6 +95,25 @@ const appointmentSchema = new Schema<IAppointment>(
 );
 
 appointmentSchema.index({ doctorId: 1, date: 1 });
+// The database itself refuses a second active booking for the same slot, whether it
+// came from the app or the clinic desk, so two people booking at the same moment can't
+// both win. Cancelling, completing or a no-show takes the booking out of the index and
+// frees the slot; restoring it re-checks.
+appointmentSchema.index(
+  { doctorId: 1, date: 1, timeSlot: 1 },
+  { name: 'one_active_booking_per_slot', unique: true, partialFilterExpression: { status: 'BOOKED', holdsSlot: true } }
+);
+
+appointmentSchema.pre('validate', function (next) {
+  if (this.holdsSlot === undefined) this.holdsSlot = this.type !== 'OPD' && this.timeSlot !== WALK_IN_SLOT;
+  next();
+});
+
+/** True when a write failed because another active booking already holds that slot. */
+export function isSlotTaken(err: unknown): boolean {
+  const e = err as { code?: unknown; keyPattern?: Record<string, unknown>; message?: string };
+  return Number(e?.code) === 11000 && (!!e.keyPattern?.timeSlot || String(e.message ?? '').includes('one_active_booking_per_slot'));
+}
 appointmentSchema.index({ patientId: 1, createdAt: -1 });
 // Returning walk-ins are looked up by phone within one doctor's offline bookings.
 appointmentSchema.index({ doctorId: 1, 'guest.phone': 1 }, { partialFilterExpression: { source: 'OFFLINE' } });
