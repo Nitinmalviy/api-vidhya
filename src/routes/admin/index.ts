@@ -26,12 +26,14 @@ import clinicsRouter from './clinics.routes';
 import revenueRouter from './revenue.routes';
 import ticketsRouter from './tickets.routes';
 import opdRouter from './opd.routes';
+import walkinsRouter from './walkins.routes';
 
 router.use('/opd', opdRouter);
 router.use('/kyc', kycRouter);
 router.use('/clinics', clinicsRouter);
 router.use('/revenue', revenueRouter);
 router.use('/tickets', ticketsRouter);
+router.use('/walkins', walkinsRouter);
 
 router.get('/patients', authenticate, authorize('admin'), getPatients);
 router.get('/stats/growth', authenticate, authorize('admin'), getGrowthStats);

@@ -31,6 +31,13 @@ const MAX_DAYS_AHEAD = 60;
 const toPaise = (rupees: number) => Math.round(rupees * 100);
 const toRupees = (paise?: number) => (paise ? paise / 100 : 0);
 
+/**
+ * The doctor whose desk a request acts on: the signed-in doctor, or — for the
+ * admin front desk — a doctor the admin route has already checked and set.
+ */
+export type DeskRequest = AuthRequest & { deskDoctorId?: string; deskBy?: 'admin' };
+const deskDoctor = (req: AuthRequest): string => (req as DeskRequest).deskDoctorId ?? req.user!.id;
+
 type Stage = 'SCHEDULED' | 'WAITING' | 'IN_CONSULTATION' | 'DONE' | 'NO_SHOW' | 'CANCELLED';
 
 function stageOf(a: Pick<IAppointment, 'status' | 'checkedInAt' | 'consultStartedAt'>): Stage {
@@ -42,7 +49,7 @@ function stageOf(a: Pick<IAppointment, 'status' | 'checkedInAt' | 'consultStarte
   return 'SCHEDULED';
 }
 
-const STAGE_ORDER: Record<Stage, number> = {
+export const STAGE_ORDER: Record<Stage, number> = {
   IN_CONSULTATION: 0,
   WAITING: 1,
   SCHEDULED: 2,
@@ -65,7 +72,7 @@ const last10 = (phone?: string | null) => String(phone ?? '').replace(/\D/g, '')
 
 type PopulatedPatient = { _id: Types.ObjectId; name?: string; phone?: string; gender?: string; dateOfBirth?: Date } | null;
 
-function serialize(a: IAppointment & { _id: Types.ObjectId; createdAt?: Date }, defaultFee?: number) {
+export function serialize(a: IAppointment & { _id: Types.ObjectId; createdAt?: Date }, defaultFee?: number) {
   // patientId is a populated patient on reads, a bare ObjectId right after create.
   const p = a.patientId as unknown as PopulatedPatient | Types.ObjectId;
   const linked = p && !(p instanceof Types.ObjectId) ? p : null;
@@ -297,7 +304,7 @@ export const createClinicBookingSchema = z.object({
 ───────────────────────────────────────────── */
 export const createClinicBooking = async (req: AuthRequest, res: Response): Promise<void> => {
   if (!req.user) throw new UnauthorizedError();
-  const doctorId = req.user.id;
+  const doctorId = deskDoctor(req);
   const body = req.body as z.infer<typeof createClinicBookingSchema>;
   const phone = toIndianMobile(body.phone);
   const today = nowInIndia().date;
@@ -357,6 +364,16 @@ export const createClinicBooking = async (req: AuthRequest, res: Response): Prom
     }).catch(() => undefined);
   }
 
+  if ((req as DeskRequest).deskBy === 'admin') {
+    await createNotification({
+      userId: doctorId,
+      role: 'doctor',
+      type: 'GENERAL',
+      title: 'New walk-in from the front desk',
+      message: `${body.name} is waiting${walkIn ? ` — token ${appt.token}` : ''}${body.reason ? ` (${body.reason})` : ''}.`,
+    }).catch(() => undefined);
+  }
+
   res.status(201).json({
     success: true,
     message: walkIn ? `Added to the queue — token ${appt.token}` : 'Visit booked',
@@ -377,7 +394,7 @@ export const updateVisit = async (req: AuthRequest, res: Response): Promise<void
   if (!Types.ObjectId.isValid(req.params.id)) throw new NotFoundError('Visit');
   const { action } = req.body as z.infer<typeof visitActionSchema>;
 
-  const current = await Appointment.findOne({ _id: req.params.id, doctorId: req.user.id, type: { $ne: 'OPD' } }).lean();
+  const current = await Appointment.findOne({ _id: req.params.id, doctorId: deskDoctor(req), type: { $ne: 'OPD' } }).lean();
   if (!current) throw new NotFoundError('Visit');
   const today = nowInIndia().date;
   const now = new Date();
@@ -398,7 +415,7 @@ export const updateVisit = async (req: AuthRequest, res: Response): Promise<void
       needBooked();
       needToday();
       if (current.checkedInAt) throw new BadRequestError('Already checked in');
-      set = { checkedInAt: now, ...(!current.token && { token: await nextToken(req.user.id, current.date) }) };
+      set = { checkedInAt: now, ...(!current.token && { token: await nextToken(deskDoctor(req), current.date) }) };
       break;
     case 'UNDO_CHECK_IN':
       needBooked();
@@ -412,7 +429,7 @@ export const updateVisit = async (req: AuthRequest, res: Response): Promise<void
       set = {
         consultStartedAt: now,
         ...(!current.checkedInAt && { checkedInAt: now }),
-        ...(!current.token && { token: await nextToken(req.user.id, current.date) }),
+        ...(!current.token && { token: await nextToken(deskDoctor(req), current.date) }),
       };
       break;
     case 'COMPLETE':
@@ -429,7 +446,7 @@ export const updateVisit = async (req: AuthRequest, res: Response): Promise<void
       if (current.status !== 'NO_SHOW') throw new BadRequestError('Only a no-show can be restored');
       if (
         current.timeSlot !== WALK_IN_SLOT &&
-        (await Appointment.exists({ doctorId: req.user.id, date: current.date, timeSlot: current.timeSlot, status: 'BOOKED' }))
+        (await Appointment.exists({ doctorId: deskDoctor(req), date: current.date, timeSlot: current.timeSlot, status: 'BOOKED' }))
       ) {
         throw new ConflictError('Someone else has this slot now. Book the patient again as a walk-in.');
       }
@@ -459,7 +476,7 @@ export const updateVisit = async (req: AuthRequest, res: Response): Promise<void
 
   if (action === 'COMPLETE' || action === 'CANCEL') await afterStatusChange(appt as never);
 
-  const doctor = await Doctor.findById(req.user.id).select('consultationFee').lean();
+  const doctor = await Doctor.findById(deskDoctor(req)).select('consultationFee').lean();
   res.status(200).json({ success: true, data: { visit: serialize(appt as never, doctor?.consultationFee) } });
 };
 
@@ -477,7 +494,7 @@ export const recordClinicPayment = async (req: AuthRequest, res: Response): Prom
   const appt = await Appointment.findOneAndUpdate(
     {
       _id: req.params.id,
-      doctorId: req.user.id,
+      doctorId: deskDoctor(req),
       type: { $ne: 'OPD' },
       status: { $in: ['BOOKED', 'COMPLETED'] },
       paymentStatus: 'UNPAID',
@@ -489,7 +506,7 @@ export const recordClinicPayment = async (req: AuthRequest, res: Response): Prom
     .lean();
   if (!appt) throw new BadRequestError('This visit is already paid or closed');
 
-  const doctor = await Doctor.findById(req.user.id).select('consultationFee').lean();
+  const doctor = await Doctor.findById(deskDoctor(req)).select('consultationFee').lean();
   res.status(200).json({ success: true, message: 'Payment recorded', data: { visit: serialize(appt as never, doctor?.consultationFee) } });
 };
 
@@ -500,7 +517,7 @@ export const undoClinicPayment = async (req: AuthRequest, res: Response): Promis
 
   const appt = await Appointment.findOneAndUpdate(
     // Only desk payments: platform payments are undone by cancelling (which refunds).
-    { _id: req.params.id, doctorId: req.user.id, paymentStatus: 'PAID', paymentMethod: { $in: CLINIC_PAYMENT_METHODS } },
+    { _id: req.params.id, doctorId: deskDoctor(req), paymentStatus: 'PAID', paymentMethod: { $in: CLINIC_PAYMENT_METHODS } },
     { $set: { paymentStatus: 'UNPAID' }, $unset: { paymentMethod: 1, amountPaid: 1, paidAt: 1 } },
     { new: true }
   )
@@ -508,7 +525,7 @@ export const undoClinicPayment = async (req: AuthRequest, res: Response): Promis
     .lean();
   if (!appt) throw new BadRequestError('No clinic payment to undo on this visit');
 
-  const doctor = await Doctor.findById(req.user.id).select('consultationFee').lean();
+  const doctor = await Doctor.findById(deskDoctor(req)).select('consultationFee').lean();
   res.status(200).json({ success: true, message: 'Payment removed', data: { visit: serialize(appt as never, doctor?.consultationFee) } });
 };
 
