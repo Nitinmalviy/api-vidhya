@@ -6,7 +6,7 @@ import {
   type HealthCategory,
   type HealthRecordType,
 } from '../../models/HealthRecord';
-import { Patient, type IPatient, type PatientGender } from '../../models/Patient';
+import { Patient, REFERRAL_SOURCES, type IPatient, type PatientGender } from '../../models/Patient';
 import type { AuthRequest } from '../../types';
 import { BadRequestError, ConflictError, NotFoundError, UnauthorizedError } from '../../utils/AppError';
 import { assertStrongPassword } from '../../utils/validation';
@@ -41,10 +41,36 @@ function serializeProfile(p: IPatient & { _id: unknown; createdAt?: Date }) {
     conditions: p.conditions ?? [],
     allergies: p.allergies ?? [],
     address: p.address ?? null,
+    city: p.city ?? null,
+    pincode: p.pincode ?? null,
+    referralSource: p.referralSource ?? null,
     emergencyContact: p.emergencyContact ?? null,
     memberSince: p.createdAt ?? null,
     deletionScheduledAt: p.deletionScheduledAt ?? null,
   };
+}
+
+/** City / pincode / "how did you hear about us" — shared by signup and profile edits. null clears a field. */
+export function parseLocationAndSource(body: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (body.city !== undefined) {
+    const city = body.city === null ? '' : String(body.city).trim().replace(/\s+/g, ' ');
+    if (city && !/^[\p{L} .'-]{2,60}$/u.test(city)) throw new BadRequestError('Enter a valid city name');
+    // Title case so "indore" and "Indore" count as one city in reports.
+    out.city = city ? city.toLowerCase().replace(/(^|[\s-])\p{L}/gu, (c) => c.toUpperCase()) : null;
+  }
+  if (body.pincode !== undefined) {
+    const pin = body.pincode === null ? '' : String(body.pincode).trim();
+    if (pin && !/^[1-9]\d{5}$/.test(pin)) throw new BadRequestError('Enter a valid 6-digit pincode');
+    out.pincode = pin || null;
+  }
+  if (body.referralSource !== undefined) {
+    if (body.referralSource !== null && !(REFERRAL_SOURCES as readonly string[]).includes(String(body.referralSource))) {
+      throw new BadRequestError('Invalid answer for how you heard about us');
+    }
+    out.referralSource = body.referralSource;
+  }
+  return out;
 }
 
 /** Grace period between "delete my account" and the data actually being erased. */
@@ -113,6 +139,7 @@ export const updateProfile = async (req: AuthRequest, res: Response): Promise<vo
     if (w !== null && (Number.isNaN(w) || w < 1 || w > 500)) throw new BadRequestError('Invalid weight');
     update.weightKg = w;
   }
+  Object.assign(update, parseLocationAndSource(body));
   const conditions = cleanTags(body.conditions);
   if (conditions !== undefined) update.conditions = conditions;
   const allergies = cleanTags(body.allergies);

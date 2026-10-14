@@ -80,6 +80,8 @@ export interface IDoctor {
   // KYC details
   degreeDetails?: IDegreeDetails;
   licenseDetails?: ILicenseDetails;
+  /** S3 key of the government ID uploaded at registration (Aadhaar, PAN, …), for KYC review. */
+  identityProofUrl?: string;
   specializations: string[];
 
   // Public profile
@@ -105,6 +107,8 @@ export interface IDoctor {
   // Verification status
   kycStatus: DoctorKycStatus;
   adminRemarks?: string;
+  /** Set when an admin removed the account (e.g. a test doctor). Hidden everywhere; can't sign in. */
+  removedAt?: Date | null;
 
   // Live-OPD access, granted by admin
   opdAccess: IOpdAccess;
@@ -217,6 +221,7 @@ const doctorSchema = new Schema<IDoctor>(
       type: degreeDetailsSchema,
       required: false,
     },
+    identityProofUrl: { type: String, trim: true },
     licenseDetails: {
       type: licenseDetailsSchema,
       required: false,
@@ -264,6 +269,7 @@ const doctorSchema = new Schema<IDoctor>(
       enum: ['PENDING', 'APPROVED', 'REJECTED'],
       default: 'PENDING',
     },
+    removedAt: { type: Date, default: null },
     adminRemarks: {
       type: String,
       required: false,

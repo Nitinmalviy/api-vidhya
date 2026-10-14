@@ -18,6 +18,9 @@ export interface IAddress {
   isDefault: boolean;
 }
 
+export const REFERRAL_SOURCES = ['GOOGLE', 'FRIEND_FAMILY', 'DOCTOR', 'SOCIAL', 'AD', 'OTHER'] as const;
+export type PatientReferralSource = (typeof REFERRAL_SOURCES)[number];
+
 export interface IPatient {
   name: string;
   email: string;
@@ -39,6 +42,10 @@ export interface IPatient {
   conditions: string[];
   allergies: string[];
   address?: string;
+  city?: string;
+  pincode?: string;
+  /** How they heard about VidhyaCare (signup survey). */
+  referralSource?: PatientReferralSource;
   emergencyContact?: { name: string; phone: string };
   /** When the patient asked for deletion. Data stays intact during the grace period. */
   deletionRequestedAt?: Date | null;
@@ -91,6 +98,9 @@ const patientSchema = new Schema<IPatient>(
     conditions: { type: [String], default: [] },
     allergies: { type: [String], default: [] },
     address: { type: String, trim: true, maxlength: 300 },
+    city: { type: String, trim: true, maxlength: 60 },
+    pincode: { type: String, trim: true, match: /^[1-9]\d{5}$/ },
+    referralSource: { type: String, enum: REFERRAL_SOURCES },
     emergencyContact: {
       type: { name: { type: String, trim: true }, phone: { type: String, trim: true } },
       _id: false,

@@ -87,3 +87,89 @@ export const getKycStats = async (_req: Request, res: Response): Promise<void> =
     data: { PENDING: pending, APPROVED: approved, REJECTED: rejected },
   });
 };
+
+type Bucket = { key: string; count: number };
+
+/* ─────────────────────────────────────────────
+   GET /api/v1/admin/stats/patient-insights
+   Aggregate-only view of who the patients are (no individual records), built
+   from the optional "about you" answers at signup and profile edits.
+───────────────────────────────────────────── */
+export const getPatientInsights = async (_req: Request, res: Response): Promise<void> => {
+  const active = { deletionScheduledAt: null };
+  const now = new Date();
+  const yearsAgo = (y: number) => new Date(now.getFullYear() - y, now.getMonth(), now.getDate());
+
+  const [facets] = await Patient.aggregate<{
+    total: { n: number }[];
+    withAge: { n: number }[];
+    withGender: { n: number }[];
+    withCity: { n: number }[];
+    gender: Bucket[];
+    age: Bucket[];
+    cities: Bucket[];
+    sources: Bucket[];
+    conditions: Bucket[];
+  }>([
+    { $match: active },
+    {
+      $facet: {
+        total: [{ $count: 'n' }],
+        withAge: [{ $match: { dateOfBirth: { $ne: null } } }, { $count: 'n' }],
+        withGender: [{ $match: { gender: { $ne: null } } }, { $count: 'n' }],
+        withCity: [{ $match: { city: { $nin: [null, ''] } } }, { $count: 'n' }],
+        gender: [{ $group: { _id: { $ifNull: ['$gender', 'UNKNOWN'] }, count: { $sum: 1 } } }, { $project: { _id: 0, key: '$_id', count: 1 } }],
+        age: [
+          {
+            $group: {
+              _id: {
+                $switch: {
+                  branches: [
+                    { case: { $not: ['$dateOfBirth'] }, then: 'Unknown' },
+                    { case: { $gt: ['$dateOfBirth', yearsAgo(18)] }, then: '0-17' },
+                    { case: { $gt: ['$dateOfBirth', yearsAgo(30)] }, then: '18-29' },
+                    { case: { $gt: ['$dateOfBirth', yearsAgo(45)] }, then: '30-44' },
+                    { case: { $gt: ['$dateOfBirth', yearsAgo(60)] }, then: '45-59' },
+                  ],
+                  default: '60+',
+                },
+              },
+              count: { $sum: 1 },
+            },
+          },
+          { $project: { _id: 0, key: '$_id', count: 1 } },
+        ],
+        cities: [
+          { $match: { city: { $nin: [null, ''] } } },
+          { $group: { _id: '$city', count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+          { $limit: 8 },
+          { $project: { _id: 0, key: '$_id', count: 1 } },
+        ],
+        sources: [{ $group: { _id: { $ifNull: ['$referralSource', 'UNKNOWN'] }, count: { $sum: 1 } } }, { $sort: { count: -1 } }, { $project: { _id: 0, key: '$_id', count: 1 } }],
+        conditions: [
+          { $unwind: '$conditions' },
+          { $group: { _id: { $toLower: '$conditions' }, count: { $sum: 1 } } },
+          { $sort: { count: -1 } },
+          { $limit: 8 },
+          { $project: { _id: 0, key: '$_id', count: 1 } },
+        ],
+      },
+    },
+  ]);
+
+  const AGE_ORDER = ['0-17', '18-29', '30-44', '45-59', '60+', 'Unknown'];
+  const n = (x: { n: number }[]) => x[0]?.n ?? 0;
+  res.status(200).json({
+    success: true,
+    data: {
+      total: n(facets.total),
+      profileCompletion: { withAge: n(facets.withAge), withGender: n(facets.withGender), withCity: n(facets.withCity) },
+      gender: facets.gender.sort((a, b) => b.count - a.count),
+      ageBands: AGE_ORDER.map((key) => ({ key, count: facets.age.find((b) => b.key === key)?.count ?? 0 })),
+      cities: facets.cities,
+      sources: facets.sources,
+      conditions: facets.conditions,
+    },
+  });
+};

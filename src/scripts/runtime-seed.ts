@@ -1,16 +1,11 @@
 import { Doctor } from '../models/Doctor';
 import { Review } from '../models/Review';
 import { logger } from '../utils/logger';
+import { removeDoctorAccount } from '../services/doctorRemoval';
 import { Appointment, WALK_IN_SLOT } from '../models/Appointment';
 
-/**
- * Idempotent startup seeding so doctor cards and detail pages always have
- * real, dynamic data to render:
- *  - approved doctors missing a consultationFee / yearsExperience get sensible values
- *  - if a doctor has no reviews yet, a few starter reviews are inserted
- * Runs after DB connect; every operation is guarded so a failure never blocks boot.
- */
 
+// Names and texts the old seeder used — kept only to recognise and delete its reviews.
 const REVIEWER_NAMES = [
   'Riya Sharma',
   'Arjun Patel',
@@ -35,73 +30,45 @@ const REVIEW_TEXTS: { rating: number; text: string }[] = [
   { rating: 5, text: 'Accurate diagnosis on the first visit after months of confusion elsewhere. Highly recommended.' },
 ];
 
-/** Deterministic-ish pseudo-random from a string so re-runs stay stable. */
-function seedFrom(str: string): number {
-  let h = 0;
-  for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) >>> 0;
-  return h;
-}
 
+/** Doctors created by the old `seed:doctors` script — demo accounts, not real practitioners. */
+const TEST_DOCTOR_EMAILS = [
+  'arjun.sharma@vidhyacare.in',
+  'priya.nair@vidhyacare.in',
+  'suresh.verma@vidhyacare.in',
+  'kavita.reddy@vidhyacare.in',
+  'rajesh.iyer@vidhyacare.in',
+  'anita.gupta@vidhyacare.in',
+  'vikram.bose@vidhyacare.in',
+  'meera.joshi@vidhyacare.in',
+  'santosh.pillai@vidhyacare.in',
+  'deepa.menon@vidhyacare.in',
+];
+
+/**
+ * Startup housekeeping. This used to invent data for public profiles — starter
+ * reviews from made-up patients and random fees/experience. Patients read those
+ * as real, so it now only removes what earlier runs created. Idempotent and cheap
+ * once clean; failures never block boot.
+ */
 export async function runtimeSeed(): Promise<void> {
   try {
-    // 1. Fill in missing public-profile fields on approved doctors.
-    const incomplete = await Doctor.find({
-      kycStatus: 'APPROVED',
-      $or: [{ consultationFee: { $exists: false } }, { yearsExperience: { $exists: false } }],
-    })
-      .select('consultationFee yearsExperience degreeDetails')
-      .exec();
+    // 1. Reviews nobody wrote: no patient account, text and name from the old templates.
+    const fake = await Review.deleteMany({
+      patientId: { $exists: false },
+      patientName: { $in: REVIEWER_NAMES },
+      text: { $in: REVIEW_TEXTS.map((r) => r.text) },
+    });
+    if (fake.deletedCount) logger.info({ count: fake.deletedCount }, 'Cleanup: removed seeded reviews');
 
-    for (const doc of incomplete) {
-      const h = seedFrom(String(doc._id));
-      if (doc.consultationFee === undefined || doc.consultationFee === null) {
-        doc.consultationFee = 300 + (h % 6) * 100; // ₹300–800
-      }
-      if (doc.yearsExperience === undefined || doc.yearsExperience === null) {
-        const fromDegree = doc.degreeDetails?.passingYear
-          ? new Date().getFullYear() - doc.degreeDetails.passingYear
-          : null;
-        doc.yearsExperience =
-          fromDegree && fromDegree > 0 && fromDegree < 50 ? fromDegree : 4 + (h % 14);
-      }
-      await doc.save();
-    }
-    if (incomplete.length > 0) {
-      logger.info({ count: incomplete.length }, 'Runtime seed: filled doctor fees/experience');
-    }
-
-    // 2. Starter reviews for approved doctors that have none.
-    const approved = await Doctor.find({ kycStatus: 'APPROVED' }).select('_id').lean();
-    if (approved.length === 0) return;
-
-    const reviewed = new Set(
-      (await Review.distinct('doctorId', {
-        doctorId: { $in: approved.map((d) => d._id) },
-      })).map(String)
-    );
-
-    let created = 0;
-    for (const doc of approved) {
-      if (reviewed.has(String(doc._id))) continue;
-      const h = seedFrom(String(doc._id));
-      const howMany = 3 + (h % 3); // 3–5 reviews
-      const docs = Array.from({ length: howMany }, (_, i) => {
-        const tpl = REVIEW_TEXTS[(h + i * 3) % REVIEW_TEXTS.length];
-        return {
-          doctorId: doc._id,
-          patientName: REVIEWER_NAMES[(h + i * 7) % REVIEWER_NAMES.length],
-          rating: tpl.rating,
-          text: tpl.text,
-        };
-      });
-      await Review.insertMany(docs);
-      created += docs.length;
-    }
-    if (created > 0) {
-      logger.info({ count: created }, 'Runtime seed: created starter doctor reviews');
+    // 2. Demo doctors from the seed script.
+    const demo = await Doctor.find({ email: { $in: TEST_DOCTOR_EMAILS }, removedAt: null }).select('_id email').lean();
+    for (const d of demo) {
+      const mode = await removeDoctorAccount(String(d._id), 'demo account from seed script');
+      logger.info({ email: d.email, mode }, 'Cleanup: removed demo doctor');
     }
   } catch (err) {
-    logger.error({ err }, 'Runtime seed failed (non-fatal)');
+    logger.error({ err }, 'Startup cleanup failed (non-fatal)');
   }
 }
 

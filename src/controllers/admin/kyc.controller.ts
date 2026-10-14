@@ -6,6 +6,7 @@ import { signFields, signFieldsArray } from '../../services/presignedUrl';
 const DOCTOR_URL_FIELDS = [
   'degreeDetails.documentUrl',
   'licenseDetails.documentUrl',
+  'identityProofUrl',
   'photoUrl',
 ];
 

@@ -3,7 +3,7 @@ import { sanitizeSpecializations } from '../../utils/specializations';
 import crypto from 'crypto';
 import { Doctor } from '../../models/Doctor';
 import { Clinic } from '../../models/Clinic';
-import { uploadBase64ToS3 } from '../../services/s3Upload';
+import { deleteFromS3, uploadBase64ToS3Detailed, type S3Folder, type S3UploadResult } from '../../services/s3Upload';
 import { sendEmail, sendCodeEmail, otpEmailTemplate } from '../../services/email';
 import { signAccessToken, signRefreshToken, verifyRefreshToken } from '../../utils/jwt';
 import { generateOtp, hashOtp, otpExpiresAt } from '../../utils/otp';
@@ -46,6 +46,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     expiryDate,
     licenseFile,
     clinicPhotoFile,
+    identityProofFile,
     consultationFee,
     yearsExperience,
     gender,
@@ -70,11 +71,46 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   const otpHash = hashOtp(otp);
   const emailVerificationExpires = otpExpiresAt();
 
-  const [degreeUrl, licenseUrl, clinicPhotoUrl] = await Promise.all([
-    degreeFile ? uploadBase64ToS3(degreeFile, 'doctor-kyc') : Promise.resolve(undefined),
-    licenseFile ? uploadBase64ToS3(licenseFile, 'doctor-kyc') : Promise.resolve(undefined),
-    clinicPhotoFile ? uploadBase64ToS3(clinicPhotoFile, 'clinic') : Promise.resolve(undefined),
-  ]);
+  // Upload KYC files BEFORE creating any records. If a file was sent but
+  // can't be stored (bad format, too large, S3 error), reject the whole
+  // registration so we never create a doctor missing documents they submitted.
+  const kycFiles: Array<{ file: unknown; folder: S3Folder; label: string }> = [
+    { file: degreeFile, folder: 'doctor-kyc', label: 'degree certificate' },
+    { file: licenseFile, folder: 'doctor-kyc', label: 'medical license' },
+    { file: clinicPhotoFile, folder: 'clinic', label: 'clinic photo' },
+    { file: identityProofFile, folder: 'doctor-kyc', label: 'ID proof' },
+  ];
+  const uploads: Array<S3UploadResult | undefined> = await Promise.all(
+    kycFiles.map(({ file, folder }) => (file ? uploadBase64ToS3Detailed(file, folder) : Promise.resolve(undefined))),
+  );
+
+  const failedIndex = uploads.findIndex(
+    (r) =>
+      r !== undefined &&
+      (!r.ok ||
+        // S3 missing in production would silently drop the documents.
+        (r.skipped === 'not_configured' && env.NODE_ENV === 'production')),
+  );
+  if (failedIndex !== -1) {
+    // Don't leave orphaned files behind for the uploads that did succeed.
+    await Promise.all(uploads.map((r) => (r?.ok && r.key ? deleteFromS3(r.key) : Promise.resolve())));
+    const failed = uploads[failedIndex]!;
+    const { label } = kycFiles[failedIndex];
+    logger.warn(
+      { email: normalizedEmail, document: label, reason: failed.ok ? 'not_configured' : failed.reason },
+      'Doctor registration rejected: KYC document could not be saved',
+    );
+    const hint = failed.ok
+      ? ''
+      : failed.reason === 'too_large'
+        ? ' The file is too large — please use a smaller photo or PDF.'
+        : failed.reason === 'unsupported_type' || failed.reason === 'invalid_format'
+          ? ' Please use a JPG or PNG photo, or a PDF.'
+          : '';
+    throw new BadRequestError(`We couldn't save your ${label} — please upload it again.${hint}`);
+  }
+
+  const [degreeUrl, licenseUrl, clinicPhotoUrl, identityProofUrl] = uploads.map((r) => (r?.ok ? r.key : undefined));
 
   const doctor = await Doctor.create({
     name: String(name).trim(),
@@ -88,6 +124,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     consultationFee: Number.isFinite(Number(consultationFee)) ? Math.max(0, Number(consultationFee)) : undefined,
     yearsExperience: Number.isFinite(Number(yearsExperience)) ? Math.max(0, Number(yearsExperience)) : undefined,
     kycStatus: 'PENDING',
+    identityProofUrl,
     isEmailVerified: false,
     emailVerificationTokenHash: otpHash,
     emailVerificationExpires,

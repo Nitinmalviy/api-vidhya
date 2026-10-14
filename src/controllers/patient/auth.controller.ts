@@ -5,6 +5,7 @@ import { Patient, type IPatient } from '../../models/Patient';
 import { smsEnabled } from '../../services/sms';
 import { issuePhoneOtp, consumePhoneOtp } from '../../services/phoneOtp';
 import { toIndianMobile } from '../../utils/phone';
+import { parseLocationAndSource } from './profile.controller';
 
 type PatientDoc = HydratedDocument<IPatient>;
 import { sendEmail, sendCodeEmail, otpEmailTemplate } from '../../services/email';
@@ -39,6 +40,33 @@ async function startSession(patient: PatientDoc) {
   };
 }
 
+const GENDERS = ['MALE', 'FEMALE', 'OTHER'];
+const BLOOD_GROUPS = ['A+', 'A-', 'B+', 'B-', 'AB+', 'AB-', 'O+', 'O-'];
+
+function parseSignupExtras(body: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  const blank = (v: unknown) => v === undefined || v === null || v === '';
+  if (!blank(body.gender)) {
+    if (!GENDERS.includes(String(body.gender))) throw new BadRequestError('Invalid gender');
+    out.gender = body.gender;
+  }
+  if (!blank(body.dateOfBirth)) {
+    const dob = new Date(String(body.dateOfBirth));
+    const years = (Date.now() - dob.getTime()) / (365.25 * 86_400_000);
+    if (Number.isNaN(dob.getTime()) || years < 0 || years > 120) throw new BadRequestError('Enter a valid date of birth');
+    out.dateOfBirth = dob;
+  }
+  if (!blank(body.bloodGroup)) {
+    if (!BLOOD_GROUPS.includes(String(body.bloodGroup))) throw new BadRequestError('Invalid blood group');
+    out.bloodGroup = body.bloodGroup;
+  }
+  if (Array.isArray(body.conditions)) {
+    out.conditions = [...new Set(body.conditions.map((c) => String(c).trim().slice(0, 60)).filter(Boolean))].slice(0, 15);
+  }
+  for (const [k, v] of Object.entries(parseLocationAndSource(body))) if (v !== null) out[k] = v;
+  return out;
+}
+
 /* ─────────────────────────────────────────────
    POST /api/patient/auth/register
 ───────────────────────────────────────────── */
@@ -52,6 +80,8 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   assertValidPhone(phone);
 
   const normalizedEmail = assertValidEmail(email);
+  // Optional "about you" answers; skipped fields stay empty and can be filled in later.
+  const extras = parseSignupExtras(req.body ?? {});
 
   const otp = generateOtp();
   const otpHash = hashOtp(otp);
@@ -71,6 +101,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
     existing.name = String(name).trim();
     existing.phone = String(phone).trim();
     existing.password = String(password); // re-hashed by the pre-save hook
+    existing.set(extras);
     existing.emailVerificationTokenHash = otpHash;
     existing.emailVerificationExpires = expires;
     await existing.save();
@@ -80,6 +111,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
       email: normalizedEmail,
       phone: String(phone).trim(),
       password,
+      ...extras,
       isEmailVerified: false,
       emailVerificationTokenHash: otpHash,
       emailVerificationExpires: expires,
