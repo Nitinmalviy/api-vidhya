@@ -1,13 +1,21 @@
 import bcrypt from 'bcryptjs';
-import mongoose, { type HydratedDocument, Schema } from 'mongoose';
+import mongoose, { type HydratedDocument, Schema, type Types } from 'mongoose';
 
-export type AdminRole = 'SUPER_ADMIN' | 'MODERATOR';
+/**
+ * SUPER_ADMIN — everything, including managing admins.
+ * MODERATOR   — the whole console, every clinic.
+ * FRONT_DESK  — only the walk-in desk, and only for the clinics in `clinicIds`.
+ */
+export type AdminRole = 'SUPER_ADMIN' | 'MODERATOR' | 'FRONT_DESK';
+export const ADMIN_ROLES: readonly AdminRole[] = ['SUPER_ADMIN', 'MODERATOR', 'FRONT_DESK'];
 
 export interface IAdmin {
   name: string;
   email: string;
   password?: string;
   role: AdminRole;
+  /** Clinics a FRONT_DESK account works for. Ignored for other roles. */
+  clinicIds: Types.ObjectId[];
   permissions: string[];
   isEmailVerified: boolean;
   emailVerificationTokenHash?: string;
@@ -39,8 +47,12 @@ const adminSchema = new Schema<IAdmin>(
     },
     role: {
       type: String,
-      enum: ['SUPER_ADMIN', 'MODERATOR'],
+      enum: ADMIN_ROLES,
       required: true,
+    },
+    clinicIds: {
+      type: [{ type: Schema.Types.ObjectId, ref: 'Clinic' }],
+      default: [],
     },
     permissions: {
       type: [String],

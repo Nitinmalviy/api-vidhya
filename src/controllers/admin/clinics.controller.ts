@@ -8,9 +8,15 @@ import { signFieldsArray } from '../../services/presignedUrl';
  */
 export const getClinics = async (req: Request, res: Response): Promise<void> => {
   try {
-    const clinics = await Clinic.find()
+    const rows = await Clinic.find()
       .sort({ createdAt: -1 })
+      .populate('doctorId', 'name')
       .lean();
+    // Keep doctorId a plain id; add the owner's name so unnamed clinics can still be told apart.
+    const clinics = rows.map((c) => {
+      const owner = c.doctorId as unknown as { _id?: unknown; name?: string } | null;
+      return { ...c, doctorId: String(owner?._id ?? c.doctorId), doctorName: owner?.name ?? null };
+    });
 
     await signFieldsArray(clinics, ['photoUrl']);
 

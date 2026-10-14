@@ -16,7 +16,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
   const callerId = (req as AuthRequest).user?.id;
   const caller = callerId ? await Admin.findById(callerId).select('role').lean() : null;
   if (caller?.role !== 'SUPER_ADMIN') throw new ForbiddenError('Only a super admin can add admins');
-  if (role !== undefined && role !== 'SUPER_ADMIN' && role !== 'MODERATOR') throw new BadRequestError('Invalid role');
+  if (role !== undefined && role !== 'SUPER_ADMIN' && role !== 'MODERATOR') throw new BadRequestError('Invalid role — add front desk staff from the Team page');
   assertStrongPassword(password);
 
   const existing = await Admin.findOne({ email: String(email).toLowerCase() }).lean().exec();
